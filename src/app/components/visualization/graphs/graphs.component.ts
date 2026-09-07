@@ -17,7 +17,46 @@ import * as d3 from 'd3';
 /* ========================================================================== */
 
 export interface NPtychApiData {
+  nodes: string[];
 
+  edges: Array<{
+    source: string;
+    target: string;
+    correlation: number;
+  }>;
+
+  adjacency_matrix?: any[][];
+  n?: number;
+}
+
+
+export interface PathApiData {
+  /*
+   * Pri cestách je poradie nodes dôležité.
+   *
+   * Napr.:
+   * A -> B -> C -> D
+   */
+  nodes: string[];
+
+  edges: Array<{
+    source: string;
+    target: string;
+    correlation: number;
+  }>;
+
+  adjacency_matrix?: any[][];
+}
+
+
+export interface HotspotApiData {
+  /*
+   * Hotspot je indukovaná hviezda K_(1,h).
+   *
+   * Center môže backend poslať explicitne.
+   * Ak ho neposiela, viewer ho spoľahlivo dopočíta
+   * ako vrchol s najvyšším stupňom v štruktúre.
+   */
   nodes: string[];
 
   edges: Array<{
@@ -28,59 +67,70 @@ export interface NPtychApiData {
 
   adjacency_matrix?: any[][];
 
-  n?: number;
+  center?: string;
+  leaves?: string[];
+  h?: number;
 }
 
 
 /* ========================================================================== */
-/* INTERNAL STRUCTURES                                                        */
+/* INTERNAL DATA                                                              */
 /* ========================================================================== */
 
+type StructureKind = 'n-ptych' | 'path' | 'hotspot';
+
+
 interface NormalizedEdge {
-
   source: string;
-
   target: string;
-
   correlation: number;
 }
 
 
-interface NPtychStructure {
-
+interface AnalysisStructure {
   key: string;
-
+  kind: StructureKind;
   size: number;
 
+  /*
+   * N-ptych:
+   *   members sú zoradené, pretože poradie vrcholov nehrá úlohu.
+   *
+   * Path:
+   *   members zachovávajú poradie cesty.
+   */
   members: string[];
 
   edges: NormalizedEdge[];
+
+  /*
+   * Iba pre hotspoty.
+   * members[0] je tiež center, ale explicitné pole
+   * nám zjednodušuje containment a detail render.
+   */
+  centerId?: string;
 }
 
 
-/*
- * Jeden node vo vizuálnej hierarchii.
- *
- * pathId je unikátne podľa celej cesty.
- *
- * Rovnaký K3 teda môže byť:
- *
- * K5
- * ├── K4 ABCD
- * │   └── K3 ABC
- * │
- * └── K4 ABCE
- *     └── K3 ABC
- */
 interface HierarchyViewNode {
-
-  pathId: string;
-
-  parentPathId: string | null;
-
-  structure: NPtychStructure | null;
-
+  viewPathId: string;
+  parentViewPathId: string | null;
+  structure: AnalysisStructure | null;
   virtualRoot: boolean;
+}
+
+
+interface HierarchyDatasetState {
+  allStructures: AnalysisStructure[];
+  structureMap: Map<string, AnalysisStructure>;
+  structuresBySize: Map<number, AnalysisStructure[]>;
+  childrenCache: Map<string, AnalysisStructure[]>;
+  rootStructures: AnalysisStructure[];
+
+  expandedViewPaths: Set<string>;
+  selectedViewPathId: string | null;
+
+  transform: d3.ZoomTransform;
 }
 
 
@@ -88,24 +138,27 @@ interface HierarchyViewNode {
 /* DETAIL GRAPH                                                               */
 /* ========================================================================== */
 
-interface DetailNode
-  extends d3.SimulationNodeDatum {
-
+interface DetailNode extends d3.SimulationNodeDatum {
   id: string;
-
   lines: string[];
-
   boxHeight: number;
+
+  /*
+   * Používa sa hlavne pri paths, aby sa cesta držala horizontálne.
+   */
+  targetX?: number;
+  targetY?: number;
+
+  /*
+   * Pri hotspote vizuálne odlíšime centrálny vrchol.
+   */
+  isCenter?: boolean;
 }
 
 
-interface DetailEdge
-  extends d3.SimulationLinkDatum<DetailNode> {
-
+interface DetailEdge extends d3.SimulationLinkDatum<DetailNode> {
   source: string | DetailNode;
-
   target: string | DetailNode;
-
   correlation: number;
 }
 
@@ -144,6 +197,14 @@ export class GraphsComponent
 
 
   @Input()
+  pathsData: PathApiData[] | null = null;
+
+
+  @Input()
+  hotspotsData: HotspotApiData[] | null = null;
+
+
+  @Input()
   graphType: string = 'n-ptychs';
 
 
@@ -152,141 +213,110 @@ export class GraphsComponent
   /* ======================================================================== */
 
   /*
-   * N-ptychy vizualizujeme iba od K3 vyššie.
+   * N-ptych končí na K3.
+   * K2 už v tomto view nepoužívame.
    */
   private readonly MIN_NPTYCH_SIZE = 3;
 
 
   /*
-   * Hierarchy cards.
+   * Cesta s dvoma vrcholmi je stále legitímna cesta.
    */
-  private readonly CARD_WIDTH = 190;
-
-  private readonly CARD_HEIGHT = 165;
-
-  private readonly HORIZONTAL_SPACING = 235;
-
-  private readonly VERTICAL_SPACING = 225;
+  private readonly MIN_PATH_SIZE = 2;
 
 
   /*
-   * Detail graph nodes.
+   * Najmenší hotspot je K_(1,2):
+   * center + 2 leaves = 3 vrcholy.
    */
-  private readonly DETAIL_NODE_WIDTH = 190;
+  private readonly MIN_HOTSPOT_SIZE = 3;
 
+
+  private readonly CARD_WIDTH = 200;
+  private readonly CARD_HEIGHT = 170;
+  private readonly HORIZONTAL_SPACING = 245;
+  private readonly VERTICAL_SPACING = 230;
+
+
+  private readonly DETAIL_NODE_WIDTH = 190;
   private readonly ATTRIBUTE_LINE_LENGTH = 15;
 
 
   /* ======================================================================== */
-  /* DATA                                                                     */
+  /* DATASETS                                                                 */
   /* ======================================================================== */
 
-  private allStructures: NPtychStructure[] = [];
+  private nPtychState: HierarchyDatasetState =
+    this.createEmptyDatasetState();
 
 
-  private structureMap =
-    new Map<string, NPtychStructure>();
+  private pathState: HierarchyDatasetState =
+    this.createEmptyDatasetState();
 
 
-  private structuresBySize =
-    new Map<number, NPtychStructure[]>();
-
-
-  private childrenCache =
-    new Map<string, NPtychStructure[]>();
-
-
-  private rootStructures: NPtychStructure[] = [];
+  private hotspotState: HierarchyDatasetState =
+    this.createEmptyDatasetState();
 
 
   /* ======================================================================== */
-  /* HIERARCHY STATE                                                          */
+  /* VIEW STATE                                                               */
   /* ======================================================================== */
 
-  private expandedPaths =
-    new Set<string>();
+  private viewMode: 'hierarchy' | 'detail' = 'hierarchy';
 
 
-  private selectedPathId:
-    string | null = null;
+  private focusedStructure: AnalysisStructure | null = null;
 
 
   /*
-   * Rozlišujeme:
-   *
-   * hierarchy
-   * detail
-   */
-  private viewMode:
-    'hierarchy' | 'detail' = 'hierarchy';
-
-
-  /*
-   * Aktuálne otvorený detail.
-   */
-  private focusedStructure:
-    NPtychStructure | null = null;
-
-
-  /* ======================================================================== */
-  /* ANGULAR STATE                                                            */
-  /* ======================================================================== */
-
-  private viewInitialized = false;
-
-
-  private resizeObserver?:
-    ResizeObserver;
-
-
-  /* ======================================================================== */
-  /* D3 STATE                                                                 */
-  /* ======================================================================== */
-
-  /*
-   * Hierarchia a detail majú vlastné kamery.
-   *
-   * Takže keď otvorím K4 a vrátim sa,
-   * hierarchy ostane tam, kde som ju nechal.
-   */
-  private hierarchyTransform:
-    d3.ZoomTransform =
-      d3.zoomIdentity;
-
-
-  /*
-   * Pri expand/collapse si zapamätáme obrazovkovú pozíciu
-   * kliknutého hierarchy node. Po novom d3.tree() layoute
-   * upravíme transform tak, aby karta ostala na rovnakom
-   * mieste obrazovky a celý strom používateľovi neuskočil.
+   * Pri expand/collapse držíme kliknutú kartu na rovnakom mieste obrazovky.
    */
   private hierarchyAnchor: {
-    pathId: string;
+    graphType: string;
+    viewPathId: string;
     screenX: number;
     screenY: number;
   } | null = null;
 
 
-  private detailTransform:
-    d3.ZoomTransform =
-      d3.zoomIdentity;
+  /* ======================================================================== */
+  /* ANGULAR / D3 STATE                                                       */
+  /* ======================================================================== */
+
+  private viewInitialized = false;
+  private resizeObserver?: ResizeObserver;
 
 
-  private detailSimulation?:
-    d3.Simulation<
-      DetailNode,
-      DetailEdge
-    >;
+  private detailTransform: d3.ZoomTransform = d3.zoomIdentity;
 
 
-  /*
-   * Potrebujeme rozlíšiť:
-   *
-   * click
-   * double click
-   */
-  private clickTimer:
-    number | null = null;
+  private detailSimulation?: d3.Simulation<DetailNode, DetailEdge>;
+
+
+  private clickTimer: number | null = null;
+
+
+  /* ======================================================================== */
+  /* PUBLIC TEMPLATE HELPERS                                                  */
+  /* ======================================================================== */
+
+  get hasActiveData(): boolean {
+    const state = this.getActiveState();
+    return state.allStructures.length > 0;
+  }
+
+
+  get emptyStateText(): string {
+    if (this.graphType === 'paths') {
+      return 'Nie sú dostupné cesty pre aktuálny dataset.';
+    }
+
+    if (this.graphType === 'hotspots') {
+      return 'Nie sú dostupné hotspoty pre aktuálny dataset.';
+    }
+
+    return 'Nie sú dostupné N-ptychy pre aktuálny dataset.';
+  }
 
 
   /* ======================================================================== */
@@ -294,38 +324,23 @@ export class GraphsComponent
   /* ======================================================================== */
 
   ngAfterViewInit(): void {
-
     this.viewInitialized = true;
 
 
-    this.resizeObserver =
-      new ResizeObserver(() => {
-
-        if (
-          this.viewMode === 'detail' &&
-          this.focusedStructure
-        ) {
-
-          this.renderStructureDetail(
-            this.focusedStructure,
-            false
-          );
-
-          return;
-        }
+    this.resizeObserver = new ResizeObserver(() => {
+      if (this.viewMode === 'detail' && this.focusedStructure) {
+        this.renderStructureDetail(
+          this.focusedStructure,
+          false
+        );
+        return;
+      }
 
 
-        if (
-          this.allStructures.length > 0
-        ) {
-
-          this.renderHierarchy(
-            false
-          );
-
-        }
-
-      });
+      if (this.hasActiveData) {
+        this.renderHierarchy(false);
+      }
+    });
 
 
     this.resizeObserver.observe(
@@ -333,49 +348,102 @@ export class GraphsComponent
     );
 
 
-    if (
-      this.nPtychsData &&
-      this.nPtychsData.length > 0
-    ) {
-
-      this.initializeAllData();
-
+    if (this.nPtychsData?.length) {
+      this.nPtychState = this.buildDatasetState(
+        'n-ptych',
+        this.nPtychsData
+      );
     }
 
+
+    if (this.pathsData?.length) {
+      this.pathState = this.buildDatasetState(
+        'path',
+        this.pathsData
+      );
+    }
+
+
+    if (this.hotspotsData?.length) {
+      this.hotspotState = this.buildDatasetState(
+        'hotspot',
+        this.hotspotsData
+      );
+    }
+
+
+    if (this.hasActiveData) {
+      this.renderHierarchy(true);
+    }
   }
 
 
-  ngOnChanges(
-    changes: SimpleChanges
-  ): void {
-
+  ngOnChanges(changes: SimpleChanges): void {
     if (!this.viewInitialized) {
       return;
     }
 
 
+    let activeDatasetChanged = false;
+
+
     /* ====================================================================== */
-    /* NEW DATA                                                               */
+    /* N-PTYCH DATA                                                           */
     /* ====================================================================== */
 
-    if (
-      changes['nPtychsData']
-    ) {
+    if (changes['nPtychsData']) {
+      this.nPtychState =
+        this.nPtychsData?.length
+          ? this.buildDatasetState(
+              'n-ptych',
+              this.nPtychsData
+            )
+          : this.createEmptyDatasetState();
 
-      if (
-        this.nPtychsData &&
-        this.nPtychsData.length > 0
-      ) {
 
-        this.initializeAllData();
-
+      if (this.graphType === 'n-ptychs') {
+        activeDatasetChanged = true;
       }
-      else {
+    }
 
-        this.clearCanvas();
 
+    /* ====================================================================== */
+    /* PATH DATA                                                              */
+    /* ====================================================================== */
+
+    if (changes['pathsData']) {
+      this.pathState =
+        this.pathsData?.length
+          ? this.buildDatasetState(
+              'path',
+              this.pathsData
+            )
+          : this.createEmptyDatasetState();
+
+
+      if (this.graphType === 'paths') {
+        activeDatasetChanged = true;
       }
+    }
 
+
+    /* ====================================================================== */
+    /* HOTSPOT DATA                                                           */
+    /* ====================================================================== */
+
+    if (changes['hotspotsData']) {
+      this.hotspotState =
+        this.hotspotsData?.length
+          ? this.buildDatasetState(
+              'hotspot',
+              this.hotspotsData
+            )
+          : this.createEmptyDatasetState();
+
+
+      if (this.graphType === 'hotspots') {
+        activeDatasetChanged = true;
+      }
     }
 
 
@@ -383,554 +451,500 @@ export class GraphsComponent
     /* TAB CHANGE                                                             */
     /* ====================================================================== */
 
-    if (
-      changes['graphType']
-    ) {
+    if (changes['graphType']) {
+      this.detailSimulation?.stop();
+      this.focusedStructure = null;
+      this.viewMode = 'hierarchy';
+      this.hierarchyAnchor = null;
+
 
       if (
-        this.graphType === 'n-ptychs' &&
-        this.allStructures.length > 0
+        this.graphType !== 'n-ptychs' &&
+        this.graphType !== 'paths' &&
+        this.graphType !== 'hotspots'
       ) {
+        this.clearSvg();
+        return;
+      }
 
-        if (
-          this.viewMode === 'detail' &&
-          this.focusedStructure
-        ) {
 
-          this.renderStructureDetail(
-            this.focusedStructure,
-            false
-          );
-
-        }
-        else {
-
-          this.renderHierarchy(
-            false
-          );
-
-        }
-
+      if (this.hasActiveData) {
+        this.renderHierarchy(false);
       }
       else {
-
         this.clearSvg();
-
       }
 
-    }
-
-  }
-
-
-  ngOnDestroy(): void {
-
-    this.resizeObserver?.disconnect();
-
-    this.detailSimulation?.stop();
-
-
-    if (
-      this.clickTimer !== null
-    ) {
-
-      window.clearTimeout(
-        this.clickTimer
-      );
-
-    }
-
-  }
-
-
-  /* ======================================================================== */
-  /* DATA INITIALIZATION                                                      */
-  /* ======================================================================== */
-
-  private initializeAllData(): void {
-
-    if (!this.nPtychsData) {
       return;
     }
 
 
+    /* ====================================================================== */
+    /* ACTIVE DATA RELOADED                                                   */
+    /* ====================================================================== */
+
+    if (activeDatasetChanged) {
+      this.detailSimulation?.stop();
+      this.focusedStructure = null;
+      this.viewMode = 'hierarchy';
+      this.hierarchyAnchor = null;
+
+
+      if (this.hasActiveData) {
+        this.renderHierarchy(true);
+      }
+      else {
+        this.clearSvg();
+      }
+    }
+  }
+
+
+  ngOnDestroy(): void {
+    this.resizeObserver?.disconnect();
+    this.detailSimulation?.stop();
+    this.cancelPendingClick();
+  }
+
+
+  /* ======================================================================== */
+  /* DATASET BUILD                                                            */
+  /* ======================================================================== */
+
+  private createEmptyDatasetState(): HierarchyDatasetState {
+    return {
+      allStructures: [],
+      structureMap: new Map<string, AnalysisStructure>(),
+      structuresBySize: new Map<number, AnalysisStructure[]>(),
+      childrenCache: new Map<string, AnalysisStructure[]>(),
+      rootStructures: [],
+      expandedViewPaths: new Set<string>(),
+      selectedViewPathId: null,
+      transform: d3.zoomIdentity
+    };
+  }
+
+
+  private buildDatasetState(
+    kind: StructureKind,
+    apiData: Array<NPtychApiData | PathApiData | HotspotApiData>
+  ): HierarchyDatasetState {
+
     console.time(
-      'N-PTYCH HIERARCHY INITIALIZATION'
+      kind === 'n-ptych'
+        ? 'N-PTYCH HIERARCHY INITIALIZATION'
+        : kind === 'path'
+          ? 'PATH HIERARCHY INITIALIZATION'
+          : 'HOTSPOT HIERARCHY INITIALIZATION'
     );
 
 
-    /* ====================================================================== */
-    /* RESET                                                                  */
-    /* ====================================================================== */
-
-    this.detailSimulation?.stop();
+    const state = this.createEmptyDatasetState();
 
 
-    this.allStructures = [];
+    const minimumSize = this.getMinimumSize(kind);
 
 
-    this.structureMap.clear();
+    for (const apiStructure of apiData) {
+      const rawNodes = Array.from(
+        new Set(apiStructure.nodes ?? [])
+      );
 
 
-    this.structuresBySize.clear();
-
-
-    this.childrenCache.clear();
-
-
-    this.rootStructures = [];
-
-
-    this.expandedPaths.clear();
-
-
-    this.selectedPathId = null;
-
-
-    this.hierarchyAnchor = null;
-
-
-    this.focusedStructure = null;
-
-
-    this.viewMode =
-      'hierarchy';
-
-
-    /* ====================================================================== */
-    /* NORMALIZE ALL N-PTYCHS                                                 */
-    /* ====================================================================== */
-
-    for (
-      const apiStructure
-      of this.nPtychsData
-    ) {
-
-      /*
-       * K2 ignorujeme.
-       */
-      if (
-        !apiStructure.nodes ||
-        apiStructure.nodes.length <
-          this.MIN_NPTYCH_SIZE
-      ) {
-
+      if (rawNodes.length < minimumSize) {
         continue;
-
       }
 
 
-      const members =
-        [...apiStructure.nodes]
-          .sort();
-
-
-      const key =
-        this.createStructureKey(
-          members
-        );
-
-
-      /*
-       * Duplicate protection.
-       */
-      if (
-        this.structureMap.has(
-          key
-        )
-      ) {
-
-        continue;
-
-      }
-
-
-      const memberSet =
-        new Set(
-          members
-        );
-
-
-      const edges:
-        NormalizedEdge[] =
-        (
-          apiStructure.edges ??
-          []
-        )
-
+      const rawEdges: NormalizedEdge[] =
+        (apiStructure.edges ?? [])
           .map(edge => ({
-
-            source:
-              this.getEndpointId(
-                edge.source
-              ),
-
-            target:
-              this.getEndpointId(
-                edge.target
-              ),
-
-            correlation:
-              edge.correlation
-
-          }))
-
-          .filter(edge =>
-
-            memberSet.has(
-              edge.source
-            ) &&
-
-            memberSet.has(
-              edge.target
-            )
-
-          );
+            source: this.getEndpointId(edge.source),
+            target: this.getEndpointId(edge.target),
+            correlation: edge.correlation
+          }));
 
 
-      const structure:
-        NPtychStructure = {
-
-        key,
-
-        size:
-          members.length,
-
-        members,
-
-        edges
-
-      };
+      let members: string[];
+      let key: string;
+      let centerId: string | undefined;
 
 
-      this.structureMap.set(
-        key,
-        structure
-      );
+      if (kind === 'n-ptych') {
+        members = [...rawNodes].sort();
+        key = this.createNPtychKey(members);
+      }
+      else if (kind === 'path') {
+        members = this.canonicalizePath(rawNodes);
+        key = this.createPathKey(members);
+      }
+      else {
+        const hotspotApi = apiStructure as HotspotApiData;
 
 
-      this.allStructures.push(
-        structure
-      );
+        centerId = this.resolveHotspotCenter(
+          rawNodes,
+          rawEdges,
+          hotspotApi.center
+        );
 
-    }
 
-
-    /* ====================================================================== */
-    /* SORT                                                                   */
-    /* ====================================================================== */
-
-    this.allStructures.sort(
-      (
-        a,
-        b
-      ) => {
-
-        if (
-          a.size !== b.size
-        ) {
-
-          return (
-            b.size -
-            a.size
-          );
-
+        if (!centerId) {
+          continue;
         }
 
 
-        return (
-          a.key.localeCompare(
-            b.key
-          )
-        );
-
-      }
-    );
+        const leaves = rawNodes
+          .filter(node => node !== centerId)
+          .sort();
 
 
-    /* ====================================================================== */
-    /* INDEX BY SIZE                                                          */
-    /* ====================================================================== */
-
-    for (
-      const structure
-      of this.allStructures
-    ) {
-
-      if (
-        !this.structuresBySize.has(
-          structure.size
-        )
-      ) {
-
-        this.structuresBySize.set(
-          structure.size,
-          []
-        );
-
-      }
-
-
-      this.structuresBySize
-        .get(
-          structure.size
-        )
-        ?.push(
-          structure
-        );
-
-    }
-
-
-    /* ====================================================================== */
-    /* ROOTS                                                                  */
-    /* ====================================================================== */
-
-    this.rootStructures =
-      this.findRootStructures();
-
-
-    /*
-     * Rooty otvoríme automaticky,
-     * takže hneď vidíme ich direct children.
-     */
-    for (
-      let index = 0;
-      index <
-      this.rootStructures.length;
-      index++
-    ) {
-
-      const structure =
-        this.rootStructures[
-          index
+        members = [
+          centerId,
+          ...leaves
         ];
 
 
-      this.expandedPaths.add(
-        this.createRootPath(
-          structure,
-          index
-        )
+        key = this.createHotspotKey(
+          centerId,
+          leaves
+        );
+      }
+
+
+      if (state.structureMap.has(key)) {
+        continue;
+      }
+
+
+      const memberSet = new Set(members);
+
+
+      const edges = rawEdges.filter(edge =>
+        memberSet.has(edge.source) &&
+        memberSet.has(edge.target)
       );
 
+
+      const structure: AnalysisStructure = {
+        key,
+        kind,
+        size: members.length,
+        members,
+        edges,
+        centerId
+      };
+
+
+      state.structureMap.set(key, structure);
+      state.allStructures.push(structure);
     }
 
 
-    if (
-      this.rootStructures.length > 0
-    ) {
 
-      this.selectedPathId =
-        this.createRootPath(
-          this.rootStructures[0],
-          0
-        );
+    state.allStructures.sort((a, b) => {
+      if (a.size !== b.size) {
+        return b.size - a.size;
+      }
 
+      return a.key.localeCompare(b.key);
+    });
+
+
+    for (const structure of state.allStructures) {
+      if (!state.structuresBySize.has(structure.size)) {
+        state.structuresBySize.set(structure.size, []);
+      }
+
+      state.structuresBySize
+        .get(structure.size)
+        ?.push(structure);
     }
 
 
-    /* ====================================================================== */
-    /* DEBUG                                                                  */
-    /* ====================================================================== */
+    state.rootStructures = this.findRootStructures(state);
+
+
+    /*
+     * Rooty sú defaultne otvorené, aby bol hneď viditeľný prvý child level.
+     */
+    state.rootStructures.forEach((structure, index) => {
+      state.expandedViewPaths.add(
+        this.createRootViewPath(structure, index)
+      );
+    });
+
+
+    if (state.rootStructures.length > 0) {
+      state.selectedViewPathId = this.createRootViewPath(
+        state.rootStructures[0],
+        0
+      );
+    }
+
 
     console.log(
-      'ALL N-PTYCHS K3+:',
-      this.allStructures.length
+      kind === 'n-ptych'
+        ? 'N-PTYCH LEVELS:'
+        : kind === 'path'
+          ? 'PATH LEVELS:'
+          : 'HOTSPOT LEVELS:',
+      Array.from(state.structuresBySize.entries())
+        .sort((a, b) => b[0] - a[0])
+        .map(([size, structures]) => ({
+          size,
+          count: structures.length
+        }))
     );
 
 
     console.log(
-      'ROOT STRUCTURES:',
-      this.rootStructures
-    );
-
-
-    console.log(
-      'LEVELS:',
-      Array.from(
-        this.structuresBySize.entries()
-      )
-
-        .sort(
-          (
-            a,
-            b
-          ) =>
-            b[0] -
-            a[0]
-        )
-
-        .map(
-          (
-            [
-              size,
-              values
-            ]
-          ) => ({
-
-            size,
-
-            count:
-              values.length
-
-          })
-        )
+      kind === 'n-ptych'
+        ? 'N-PTYCH ROOTS:'
+        : kind === 'path'
+          ? 'PATH ROOTS:'
+          : 'HOTSPOT ROOTS:',
+      state.rootStructures.length
     );
 
 
     console.timeEnd(
-      'N-PTYCH HIERARCHY INITIALIZATION'
+      kind === 'n-ptych'
+        ? 'N-PTYCH HIERARCHY INITIALIZATION'
+        : kind === 'path'
+          ? 'PATH HIERARCHY INITIALIZATION'
+          : 'HOTSPOT HIERARCHY INITIALIZATION'
     );
 
 
-    /* ====================================================================== */
-    /* VIEW                                                                   */
-    /* ====================================================================== */
-
-    this.hierarchyTransform =
-      d3.zoomIdentity;
-
-
-    this.renderHierarchy(
-      true
-    );
-
+    return state;
   }
 
 
   /* ======================================================================== */
-  /* ROOT STRUCTURES                                                          */
+  /* ROOTS                                                                    */
   /* ======================================================================== */
 
-  private findRootStructures():
-    NPtychStructure[] {
+  private findRootStructures(
+    state: HierarchyDatasetState
+  ): AnalysisStructure[] {
 
-    const roots:
-      NPtychStructure[] = [];
+    const roots: AnalysisStructure[] = [];
 
 
-    for (
-      const structure
-      of this.allStructures
-    ) {
-
-      const parents =
-        this.structuresBySize.get(
+    for (const structure of state.allStructures) {
+      const possibleParents =
+        state.structuresBySize.get(
           structure.size + 1
         ) ?? [];
 
 
-      const hasParent =
-        parents.some(
-          parent =>
-            this.isSubset(
-              structure.members,
-              parent.members
-            )
-        );
+      const hasParent = possibleParents.some(parent =>
+        this.isDirectlyContained(
+          structure,
+          parent
+        )
+      );
 
 
       if (!hasParent) {
-
-        roots.push(
-          structure
-        );
-
+        roots.push(structure);
       }
-
     }
 
 
     return roots;
-
   }
 
 
   /* ======================================================================== */
-  /* DIRECT CHILDREN                                                          */
+  /* CHILDREN                                                                 */
   /* ======================================================================== */
 
   private getDirectChildren(
-    parent: NPtychStructure
-  ): NPtychStructure[] {
+    parent: AnalysisStructure,
+    state: HierarchyDatasetState
+  ): AnalysisStructure[] {
 
-    /*
-     * K3 je posledný level.
-     */
-    if (
-      parent.size <=
-      this.MIN_NPTYCH_SIZE
-    ) {
+    const minimumSize = this.getMinimumSize(parent.kind);
 
+
+    if (parent.size <= minimumSize) {
       return [];
-
     }
 
 
-    const cached =
-      this.childrenCache.get(
-        parent.key
-      );
-
+    const cached = state.childrenCache.get(parent.key);
 
     if (cached) {
-
       return cached;
-
     }
 
 
-    const childSize =
-      parent.size - 1;
+    const childSize = parent.size - 1;
 
-
-    if (
-      childSize <
-      this.MIN_NPTYCH_SIZE
-    ) {
-
+    if (childSize < minimumSize) {
       return [];
-
     }
 
 
     const candidates =
-      this.structuresBySize.get(
-        childSize
-      ) ?? [];
+      state.structuresBySize.get(childSize) ?? [];
 
 
-    const children =
-      candidates
-
-        .filter(
-          child =>
-            this.isSubset(
-              child.members,
-              parent.members
-            )
+    const children = candidates
+      .filter(child =>
+        this.isDirectlyContained(
+          child,
+          parent
         )
-
-        .sort(
-          (
-            a,
-            b
-          ) =>
-            a.key.localeCompare(
-              b.key
-            )
-        );
+      )
+      .sort((a, b) =>
+        a.key.localeCompare(b.key)
+      );
 
 
-    this.childrenCache.set(
+    state.childrenCache.set(
       parent.key,
       children
     );
 
 
     return children;
+  }
 
+
+  private isDirectlyContained(
+    child: AnalysisStructure,
+    parent: AnalysisStructure
+  ): boolean {
+
+    if (child.kind !== parent.kind) {
+      return false;
+    }
+
+
+    if (child.size !== parent.size - 1) {
+      return false;
+    }
+
+
+    if (parent.kind === 'n-ptych') {
+      return this.isSubset(
+        child.members,
+        parent.members
+      );
+    }
+
+
+    if (parent.kind === 'path') {
+      return this.isContiguousSubpath(
+        child.members,
+        parent.members
+      );
+    }
+
+
+    return this.isNestedHotspot(
+      child,
+      parent
+    );
+  }
+
+
+  /* ======================================================================== */
+  /* PATH CONTAINMENT                                                         */
+  /* ======================================================================== */
+
+  /*
+   * Príklad:
+   *
+   * parent:
+   * A -> B -> C -> D -> E
+   *
+   * direct children:
+   * A -> B -> C -> D
+   * B -> C -> D -> E
+   *
+   * Reverz je považovaný za tú istú cestu.
+   */
+  private isContiguousSubpath(
+    child: string[],
+    parent: string[]
+  ): boolean {
+
+    if (child.length >= parent.length) {
+      return false;
+    }
+
+
+    const childKey = this.createPathKey(child);
+
+
+    for (
+      let start = 0;
+      start <= parent.length - child.length;
+      start++
+    ) {
+      const slice = parent.slice(
+        start,
+        start + child.length
+      );
+
+
+      if (this.createPathKey(slice) === childKey) {
+        return true;
+      }
+    }
+
+
+    return false;
+  }
+
+
+  /* ======================================================================== */
+  /* HOTSPOT CONTAINMENT                                                      */
+  /* ======================================================================== */
+
+  /*
+   * Hotspot K_(1,h) je vnorený do väčšieho hotspotu iba vtedy,
+   * keď majú rovnaký center a listy menšieho hotspotu sú podmnožinou
+   * listov väčšieho hotspotu.
+   *
+   * Napr.:
+   *
+   * center A, leaves B C D E
+   *                ↓
+   * center A, leaves B C D
+   */
+  private isNestedHotspot(
+    child: AnalysisStructure,
+    parent: AnalysisStructure
+  ): boolean {
+
+    if (
+      !child.centerId ||
+      !parent.centerId ||
+      child.centerId !== parent.centerId
+    ) {
+      return false;
+    }
+
+
+    const childLeaves = child.members.filter(
+      member => member !== child.centerId
+    );
+
+
+    const parentLeaves = parent.members.filter(
+      member => member !== parent.centerId
+    );
+
+
+    return this.isSubset(
+      childLeaves,
+      parentLeaves
+    );
   }
 
 
@@ -938,144 +952,75 @@ export class GraphsComponent
   /* VISIBLE HIERARCHY                                                        */
   /* ======================================================================== */
 
-  private buildVisibleHierarchy():
-    HierarchyViewNode {
-
+  private buildVisibleHierarchy(): HierarchyViewNode {
     return {
-
-      pathId:
-        '__ROOT__',
-
-      parentPathId:
-        null,
-
-      structure:
-        null,
-
-      virtualRoot:
-        true
-
+      viewPathId: '__ROOT__',
+      parentViewPathId: null,
+      structure: null,
+      virtualRoot: true
     };
-
   }
 
 
   private getVisibleChildren(
-    node:
-      HierarchyViewNode
-  ):
-    HierarchyViewNode[] |
-    undefined {
+    node: HierarchyViewNode,
+    state: HierarchyDatasetState
+  ): HierarchyViewNode[] | undefined {
 
-    /* ====================================================================== */
-    /* SYNTHETIC ROOT                                                         */
-    /* ====================================================================== */
-
-    if (
-      node.virtualRoot
-    ) {
-
-      return this.rootStructures.map(
-        (
+    if (node.virtualRoot) {
+      return state.rootStructures.map(
+        (structure, index) => ({
+          viewPathId: this.createRootViewPath(
+            structure,
+            index
+          ),
+          parentViewPathId: '__ROOT__',
           structure,
-          index
-        ) => ({
-
-          pathId:
-            this.createRootPath(
-              structure,
-              index
-            ),
-
-          parentPathId:
-            '__ROOT__',
-
-          structure,
-
-          virtualRoot:
-            false
-
+          virtualRoot: false
         })
       );
-
     }
 
 
-    if (
-      !node.structure
-    ) {
-
+    if (!node.structure) {
       return undefined;
-
     }
 
 
-    /* ====================================================================== */
-    /* COLLAPSED                                                              */
-    /* ====================================================================== */
-
-    if (
-      !this.expandedPaths.has(
-        node.pathId
-      )
-    ) {
-
+    if (!state.expandedViewPaths.has(node.viewPathId)) {
       return undefined;
-
     }
 
-
-    /* ====================================================================== */
-    /* K3 = END                                                               */
-    /* ====================================================================== */
 
     if (
       node.structure.size <=
-      this.MIN_NPTYCH_SIZE
+      this.getMinimumSize(node.structure.kind)
     ) {
-
       return undefined;
-
     }
 
 
-    /* ====================================================================== */
-    /* CHILDREN                                                               */
-    /* ====================================================================== */
-
-    const children =
-      this.getDirectChildren(
-        node.structure
-      );
-
-
-    if (
-      children.length === 0
-    ) {
-
-      return undefined;
-
-    }
-
-
-    return children.map(
-      child => ({
-
-        pathId:
-          `${node.pathId}>${child.key}`,
-
-        parentPathId:
-          node.pathId,
-
-        structure:
-          child,
-
-        virtualRoot:
-          false
-
-      })
+    const children = this.getDirectChildren(
+      node.structure,
+      state
     );
 
+
+    if (children.length === 0) {
+      return undefined;
+    }
+
+
+    return children.map(child => ({
+      viewPathId:
+        `${node.viewPathId}>${child.key}`,
+      parentViewPathId:
+        node.viewPathId,
+      structure:
+        child,
+      virtualRoot:
+        false
+    }));
   }
 
 
@@ -1085,225 +1030,148 @@ export class GraphsComponent
 
   private handleNodeClick(
     hierarchyNode:
-      d3.HierarchyPointNode<
-        HierarchyViewNode
-      >
+      d3.HierarchyPointNode<HierarchyViewNode>
   ): void {
 
-    const node =
-      hierarchyNode.data;
+    const node = hierarchyNode.data;
+    const structure = node.structure;
+
+
+    if (!structure) {
+      return;
+    }
+
+
+    const state = this.getActiveState();
 
 
     /*
-     * Pred relayoutom si uložíme PRESNÚ screen pozíciu
-     * karty, na ktorú používateľ klikol.
-     *
-     * d3.tree() pri rozbalení vetvy prepočíta x súradnice
-     * celého stromu. Bez tejto kotvy by preto hierarchy
-     * vizuálne odskočila do strany.
+     * Zapamätáme si miesto kliknutej karty pred tým,
+     * než d3.tree() prepočíta layout.
      */
-    const currentWorldX =
-      hierarchyNode.x;
-
-
-    const currentWorldY =
-      hierarchyNode.y -
-      this.VERTICAL_SPACING;
+    const hierarchyYOffset = this.VERTICAL_SPACING;
 
 
     this.hierarchyAnchor = {
-
-      pathId:
-        node.pathId,
-
-      screenX:
-        this.hierarchyTransform.applyX(
-          currentWorldX
-        ),
-
-      screenY:
-        this.hierarchyTransform.applyY(
-          currentWorldY
-        )
-
+      graphType: this.graphType,
+      viewPathId: node.viewPathId,
+      screenX: state.transform.applyX(
+        hierarchyNode.x
+      ),
+      screenY: state.transform.applyY(
+        hierarchyNode.y - hierarchyYOffset
+      )
     };
 
 
-    if (
-      !node.structure
-    ) {
-
-      return;
-
-    }
-
-
-    this.selectedPathId =
-      node.pathId;
+    state.selectedViewPathId = node.viewPathId;
 
 
     /*
-     * K3 už iba označíme.
+     * Posledný level už iba označíme.
      */
     if (
-      node.structure.size <=
-      this.MIN_NPTYCH_SIZE
+      structure.size <=
+      this.getMinimumSize(structure.kind)
     ) {
-
-      this.renderHierarchy(
-        false
-      );
-
+      this.renderHierarchy(false);
       return;
-
     }
 
 
     /*
-     * Root nechávame otvorený.
-     *
-     * Klik naň iba zatvorí
-     * všetky hlbšie vetvy.
+     * Root ostáva otvorený.
+     * Klik naň iba zavrie hlbšie vetvy.
      */
-    if (
-      node.parentPathId ===
-      '__ROOT__'
-    ) {
-
+    if (node.parentViewPathId === '__ROOT__') {
       this.collapseDescendants(
-        node.pathId
+        node.viewPathId,
+        state
       );
 
-
-      this.expandedPaths.add(
-        node.pathId
+      state.expandedViewPaths.add(
+        node.viewPathId
       );
 
-
-      this.renderHierarchy(
-        false
-      );
-
+      this.renderHierarchy(false);
       return;
-
     }
 
 
     const expanded =
-      this.expandedPaths.has(
-        node.pathId
+      state.expandedViewPaths.has(
+        node.viewPathId
       );
 
 
     if (expanded) {
-
-      this.collapsePath(
-        node.pathId
+      this.collapseViewPath(
+        node.viewPathId,
+        state
       );
 
-
-      this.renderHierarchy(
-        false
-      );
-
+      this.renderHierarchy(false);
       return;
-
     }
 
 
-    /*
-     * Pri otvorení jednej vetvy
-     * zavrieme siblings.
-     */
     this.collapseSiblingBranches(
-      node
+      node,
+      state
     );
 
 
-    this.expandedPaths.add(
-      node.pathId
+    state.expandedViewPaths.add(
+      node.viewPathId
     );
 
 
-    this.renderHierarchy(
-      false
-    );
-
+    this.renderHierarchy(false);
   }
 
 
   /* ======================================================================== */
-  /* DOUBLE CLICK / OPEN                                                      */
+  /* DOUBLE CLICK / DETAIL                                                    */
   /* ======================================================================== */
 
   private openStructureDetail(
-    structure:
-      NPtychStructure
+    structure: AnalysisStructure
   ): void {
 
-    this.hierarchyAnchor =
-      null;
-
-
+    this.hierarchyAnchor = null;
     this.cancelPendingClick();
-
-
     this.detailSimulation?.stop();
 
 
-    this.focusedStructure =
-      structure;
-
-
-    this.viewMode =
-      'detail';
-
-
-    /*
-     * Detail začne s vlastnou kamerou.
-     */
-    this.detailTransform =
-      d3.zoomIdentity;
+    this.focusedStructure = structure;
+    this.viewMode = 'detail';
+    this.detailTransform = d3.zoomIdentity;
 
 
     this.renderStructureDetail(
       structure,
       true
     );
-
   }
 
 
-  private closeStructureDetail():
-    void {
-
+  private closeStructureDetail(): void {
     this.detailSimulation?.stop();
 
 
-    this.focusedStructure =
-      null;
-
-
-    this.viewMode =
-      'hierarchy';
+    this.focusedStructure = null;
+    this.viewMode = 'hierarchy';
+    this.hierarchyAnchor = null;
 
 
     /*
-     * Pri prechode späť do hierarchy view resetneme kameru.
-     * Takto SVG nikdy nezdedí interný D3 zoom stav z detailu.
+     * Pri návrate spravíme čistý fit hierarchie.
      */
-    this.hierarchyTransform =
-      d3.zoomIdentity;
+    const state = this.getActiveState();
+    state.transform = d3.zoomIdentity;
 
 
-    this.hierarchyAnchor =
-      null;
-
-
-    this.renderHierarchy(
-      true
-    );
-
+    this.renderHierarchy(true);
   }
 
 
@@ -1313,50 +1181,27 @@ export class GraphsComponent
 
   private scheduleSingleClick(
     node:
-      d3.HierarchyPointNode<
-        HierarchyViewNode
-      >
+      d3.HierarchyPointNode<HierarchyViewNode>
   ): void {
 
     this.cancelPendingClick();
 
 
-    this.clickTimer =
-      window.setTimeout(
-        () => {
-
-          this.clickTimer =
-            null;
-
-
-          this.handleNodeClick(
-            node
-          );
-
-        },
-        220
-      );
-
+    this.clickTimer = window.setTimeout(
+      () => {
+        this.clickTimer = null;
+        this.handleNodeClick(node);
+      },
+      220
+    );
   }
 
 
-  private cancelPendingClick():
-    void {
-
-    if (
-      this.clickTimer !== null
-    ) {
-
-      window.clearTimeout(
-        this.clickTimer
-      );
-
-
-      this.clickTimer =
-        null;
-
+  private cancelPendingClick(): void {
+    if (this.clickTimer !== null) {
+      window.clearTimeout(this.clickTimer);
+      this.clickTimer = null;
     }
-
   }
 
 
@@ -1364,145 +1209,91 @@ export class GraphsComponent
   /* COLLAPSE                                                                 */
   /* ======================================================================== */
 
-  private collapsePath(
-    pathId:
-      string
+  private collapseViewPath(
+    viewPathId: string,
+    state: HierarchyDatasetState
   ): void {
-
-    const paths =
-      Array.from(
-        this.expandedPaths
-      );
-
 
     for (
       const expandedPath
-      of paths
+      of Array.from(state.expandedViewPaths)
     ) {
-
       if (
-        expandedPath ===
-          pathId ||
-
+        expandedPath === viewPathId ||
         expandedPath.startsWith(
-          `${pathId}>`
+          `${viewPathId}>`
         )
       ) {
-
-        this.expandedPaths.delete(
+        state.expandedViewPaths.delete(
           expandedPath
         );
-
       }
-
     }
-
   }
 
 
   private collapseDescendants(
-    pathId:
-      string
+    viewPathId: string,
+    state: HierarchyDatasetState
   ): void {
-
-    const paths =
-      Array.from(
-        this.expandedPaths
-      );
-
 
     for (
       const expandedPath
-      of paths
+      of Array.from(state.expandedViewPaths)
     ) {
-
       if (
         expandedPath.startsWith(
-          `${pathId}>`
+          `${viewPathId}>`
         )
       ) {
-
-        this.expandedPaths.delete(
+        state.expandedViewPaths.delete(
           expandedPath
         );
-
       }
-
     }
-
   }
 
 
   private collapseSiblingBranches(
-    node:
-      HierarchyViewNode
+    node: HierarchyViewNode,
+    state: HierarchyDatasetState
   ): void {
 
-    if (
-      !node.parentPathId
-    ) {
-
+    if (!node.parentViewPathId) {
       return;
-
     }
-
-
-    const paths =
-      Array.from(
-        this.expandedPaths
-      );
 
 
     for (
       const expandedPath
-      of paths
+      of Array.from(state.expandedViewPaths)
     ) {
-
       if (
         !expandedPath.startsWith(
-          `${node.parentPathId}>`
+          `${node.parentViewPathId}>`
         )
       ) {
-
         continue;
-
       }
 
 
-      if (
-        expandedPath ===
-        node.pathId
-      ) {
-
+      if (expandedPath === node.viewPathId) {
         continue;
-
       }
 
 
-      const remaining =
-        expandedPath.substring(
-          node.parentPathId.length +
-          1
+      const remaining = expandedPath.substring(
+        node.parentViewPathId.length + 1
+      );
+
+
+      if (!remaining.includes('>')) {
+        this.collapseViewPath(
+          expandedPath,
+          state
         );
-
-
-      /*
-       * iba direct sibling
-       */
-      if (
-        !remaining.includes(
-          '>'
-        )
-      ) {
-
-        this.collapsePath(
-          expandedPath
-        );
-
       }
-
     }
-
   }
 
 
@@ -1511,18 +1302,23 @@ export class GraphsComponent
   /* ======================================================================== */
 
   private renderHierarchy(
-    resetView:
-      boolean
+    resetView: boolean
   ): void {
 
     if (
       !this.svgRef ||
-      !this.graphContainerRef ||
-      this.allStructures.length === 0
+      !this.graphContainerRef
     ) {
-
       return;
+    }
 
+
+    const state = this.getActiveState();
+
+
+    if (state.allStructures.length === 0) {
+      this.clearSvg();
+      return;
     }
 
 
@@ -1530,405 +1326,229 @@ export class GraphsComponent
 
 
     const container =
-      this.graphContainerRef
-        .nativeElement;
+      this.graphContainerRef.nativeElement;
 
 
-    const width =
-      container.clientWidth;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
 
 
-    const height =
-      container.clientHeight;
-
-
-    if (
-      width <= 0 ||
-      height <= 0
-    ) {
-
+    if (width <= 0 || height <= 0) {
       return;
-
     }
 
 
-    const svg =
-      d3
-        .select(
-          this.svgRef.nativeElement
-        )
-
-        .attr(
-          'width',
-          width
-        )
-
-        .attr(
-          'height',
-          height
-        )
-
-        .attr(
-          'viewBox',
-          `0 0 ${width} ${height}`
-        );
+    const svg = d3
+      .select(this.svgRef.nativeElement)
+      .attr('width', width)
+      .attr('height', height)
+      .attr(
+        'viewBox',
+        `0 0 ${width} ${height}`
+      );
 
 
-    svg
-      .selectAll('*')
-      .remove();
+    svg.selectAll('*').remove();
 
 
     /* ====================================================================== */
     /* ARROW                                                                  */
     /* ====================================================================== */
 
-    const defs =
-      svg.append(
-        'defs'
-      );
+    const defs = svg.append('defs');
 
 
     defs
-      .append(
-        'marker'
-      )
-
-      .attr(
-        'id',
-        'hierarchy-arrow'
-      )
-
-      .attr(
-        'viewBox',
-        '0 -5 10 10'
-      )
-
-      .attr(
-        'refX',
-        9
-      )
-
-      .attr(
-        'refY',
-        0
-      )
-
-      .attr(
-        'markerWidth',
-        7
-      )
-
-      .attr(
-        'markerHeight',
-        7
-      )
-
-      .attr(
-        'orient',
-        'auto'
-      )
-
-      .append(
-        'path'
-      )
-
-      .attr(
-        'd',
-        'M0,-5L10,0L0,5'
-      )
-
-      .attr(
-        'fill',
-        '#9ca3af'
-      );
+      .append('marker')
+      .attr('id', 'hierarchy-arrow')
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 9)
+      .attr('refY', 0)
+      .attr('markerWidth', 7)
+      .attr('markerHeight', 7)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', '#9ca3af');
 
 
     /* ====================================================================== */
     /* WORLD                                                                  */
     /* ====================================================================== */
 
-    const world =
-      svg
-        .append(
-          'g'
-        )
-
-        .attr(
-          'class',
-          'hierarchy-world'
-        )
-
-        .attr(
-          'transform',
-          this.hierarchyTransform
-            .toString()
-        );
+    const world = svg
+      .append('g')
+      .attr('class', 'hierarchy-world')
+      .attr(
+        'transform',
+        state.transform.toString()
+      );
 
 
-    const linksGroup =
-      world
-        .append(
-          'g'
-        )
-
-        .attr(
-          'class',
-          'hierarchy-links'
-        );
+    const linksGroup = world
+      .append('g')
+      .attr('class', 'hierarchy-links');
 
 
-    const nodesGroup =
-      world
-        .append(
-          'g'
-        )
-
-        .attr(
-          'class',
-          'hierarchy-nodes'
-        );
+    const nodesGroup = world
+      .append('g')
+      .attr('class', 'hierarchy-nodes');
 
 
     /* ====================================================================== */
     /* ZOOM                                                                   */
     /* ====================================================================== */
 
-    const zoomBehavior =
-      d3
-        .zoom<
-          SVGSVGElement,
-          unknown
-        >()
-
-        .scaleExtent(
-          [
-            0.15,
-            5
-          ]
-        )
-
-        .filter(
-          (event: any) => {
-
-            const target =
-              event.target as
-                Element |
-                null;
+    const zoomBehavior = d3
+      .zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.15, 5])
+      .filter((event: any) => {
+        const target =
+          event.target as Element | null;
 
 
-            if (
-              event.type ===
-                'mousedown' &&
-
-              target?.closest(
-                '.hierarchy-card'
-              )
-            ) {
-
-              return false;
-
-            }
+        if (
+          event.type === 'mousedown' &&
+          target?.closest('.hierarchy-card')
+        ) {
+          return false;
+        }
 
 
-            return true;
+        return true;
+      })
+      .on('zoom', event => {
+        state.transform = event.transform;
 
-          }
-        )
-
-        .on(
-          'zoom',
-          event => {
-
-            this.hierarchyTransform =
-              event.transform;
-
-
-            world.attr(
-              'transform',
-              event.transform
-                .toString()
-            );
-
-          }
+        world.attr(
+          'transform',
+          event.transform.toString()
         );
+      });
 
 
-    svg.call(
-      zoomBehavior
-    );
+    svg.call(zoomBehavior);
 
 
     /*
-     * Synchronizujeme aj interný D3 __zoom stav SVG.
-     * Samotný transform na <g> nestačí - pri prvom pan/zoom
-     * by sa inak SVG mohlo vrátiť na starú kameru.
+     * Synchronizuje aj interný D3 __zoom stav.
      */
     svg.call(
       zoomBehavior.transform,
-      this.hierarchyTransform
+      state.transform
     );
 
 
-    svg.on(
-      'dblclick.zoom',
-      null
-    );
+    svg.on('dblclick.zoom', null);
 
 
     /* ====================================================================== */
-    /* DATA                                                                   */
+    /* TREE DATA                                                              */
     /* ====================================================================== */
 
     const hierarchyRoot =
-      d3.hierarchy<
-        HierarchyViewNode
-      >(
+      d3.hierarchy<HierarchyViewNode>(
         this.buildVisibleHierarchy(),
-
-        node =>
-          this.getVisibleChildren(
-            node
-          )
+        node => this.getVisibleChildren(
+          node,
+          state
+        )
       );
 
 
     const treeLayout =
       d3
-        .tree<
-          HierarchyViewNode
-        >()
-
-        .nodeSize(
-          [
-            this.HORIZONTAL_SPACING,
-            this.VERTICAL_SPACING
-          ]
-        );
+        .tree<HierarchyViewNode>()
+        .nodeSize([
+          this.HORIZONTAL_SPACING,
+          this.VERTICAL_SPACING
+        ]);
 
 
-    const pointRoot =
-      treeLayout(
-        hierarchyRoot
+    const pointRoot = treeLayout(
+      hierarchyRoot
+    );
+
+
+    const visibleNodes = pointRoot
+      .descendants()
+      .filter(node =>
+        !node.data.virtualRoot
       );
 
 
-    const visibleNodes =
-      pointRoot
-        .descendants()
-        .filter(
-          node =>
-            !node.data
-              .virtualRoot
-        );
+    const visibleLinks = pointRoot
+      .links()
+      .filter(link =>
+        !link.source.data.virtualRoot &&
+        !link.target.data.virtualRoot
+      );
 
 
-    const visibleLinks =
-      pointRoot
-        .links()
-        .filter(
-          link =>
-
-            !link.source.data
-              .virtualRoot &&
-
-            !link.target.data
-              .virtualRoot
-        );
-
-
-    /*
-     * Synthetic root odstránime
-     * vizuálnym offsetom.
-     */
     const hierarchyYOffset =
       this.VERTICAL_SPACING;
 
 
     /* ====================================================================== */
-    /* STABILIZE HIERARCHY AFTER EXPAND / COLLAPSE                            */
+    /* KEEP CLICKED CARD IN PLACE                                             */
     /* ====================================================================== */
 
     if (
       !resetView &&
-      this.hierarchyAnchor
+      this.hierarchyAnchor &&
+      this.hierarchyAnchor.graphType === this.graphType
     ) {
-
-      const anchor =
-        this.hierarchyAnchor;
+      const anchor = this.hierarchyAnchor;
 
 
-      const anchorNode =
-        visibleNodes.find(
-          visibleNode =>
-            visibleNode.data.pathId ===
-            anchor.pathId
-        );
+      const anchorNode = visibleNodes.find(
+        node =>
+          node.data.viewPathId ===
+          anchor.viewPathId
+      );
 
 
       if (anchorNode) {
-
-        const newWorldX =
-          anchorNode.x;
-
-
+        const newWorldX = anchorNode.x;
         const newWorldY =
-          anchorNode.y -
-          hierarchyYOffset;
+          anchorNode.y - hierarchyYOffset;
 
 
-        const scale =
-          this.hierarchyTransform.k;
+        const scale = state.transform.k;
 
 
         const translateX =
           anchor.screenX -
-          newWorldX *
-          scale;
+          newWorldX * scale;
 
 
         const translateY =
           anchor.screenY -
-          newWorldY *
-          scale;
+          newWorldY * scale;
 
 
-        this.hierarchyTransform =
-          d3.zoomIdentity
-            .translate(
-              translateX,
-              translateY
-            )
-            .scale(
-              scale
-            );
+        state.transform = d3.zoomIdentity
+          .translate(
+            translateX,
+            translateY
+          )
+          .scale(scale);
 
 
         world.attr(
           'transform',
-          this.hierarchyTransform
-            .toString()
+          state.transform.toString()
         );
 
 
-        /*
-         * Znovu synchronizujeme internú D3 kameru s novým
-         * transformom vypočítaným podľa anchor node.
-         */
         svg.call(
           zoomBehavior.transform,
-          this.hierarchyTransform
+          state.transform
         );
-
       }
 
 
-      /*
-       * Kotva platí iba pre tento jeden rerender.
-       */
-      this.hierarchyAnchor =
-        null;
-
+      this.hierarchyAnchor = null;
     }
 
 
@@ -1937,224 +1557,109 @@ export class GraphsComponent
     /* ====================================================================== */
 
     linksGroup
-      .selectAll(
-        'path'
-      )
-
-      .data(
-        visibleLinks
-      )
-
+      .selectAll<
+        SVGPathElement,
+        d3.HierarchyPointLink<HierarchyViewNode>
+      >('path')
+      .data(visibleLinks)
       .enter()
-
-      .append(
-        'path'
-      )
-
-      .attr(
-        'fill',
-        'none'
-      )
-
-      .attr(
-        'stroke',
-        '#c7cbd4'
-      )
-
-      .attr(
-        'stroke-width',
-        2
-      )
-
+      .append('path')
+      .attr('fill', 'none')
+      .attr('stroke', '#c7cbd4')
+      .attr('stroke-width', 2)
       .attr(
         'marker-end',
         'url(#hierarchy-arrow)'
       )
-
-      .attr(
-        'd',
-        link => {
-
-          const sourceX =
-            link.source.x;
-
-
-          const sourceY =
-            link.source.y -
-            hierarchyYOffset +
-            this.CARD_HEIGHT / 2;
+      .attr('d', link => {
+        const sourceX = link.source.x;
+        const sourceY =
+          link.source.y -
+          hierarchyYOffset +
+          this.CARD_HEIGHT / 2;
 
 
-          const targetX =
-            link.target.x;
+        const targetX = link.target.x;
+        const targetY =
+          link.target.y -
+          hierarchyYOffset -
+          this.CARD_HEIGHT / 2;
 
 
-          const targetY =
-            link.target.y -
-            hierarchyYOffset -
-            this.CARD_HEIGHT / 2;
+        const middleY =
+          (sourceY + targetY) / 2;
 
 
-          const middleY =
-            (
-              sourceY +
-              targetY
-            ) /
-            2;
-
-
-          return `
-            M ${sourceX} ${sourceY}
-            C ${sourceX} ${middleY},
-              ${targetX} ${middleY},
-              ${targetX} ${targetY}
-          `;
-
-        }
-      );
+        return `
+          M ${sourceX} ${sourceY}
+          C ${sourceX} ${middleY},
+            ${targetX} ${middleY},
+            ${targetX} ${targetY}
+        `;
+      });
 
 
     /* ====================================================================== */
     /* CARDS                                                                  */
     /* ====================================================================== */
 
-    const cards =
-      nodesGroup
-        .selectAll<
-          SVGGElement,
-          d3.HierarchyPointNode<
-            HierarchyViewNode
-          >
-        >(
-          'g.hierarchy-card'
-        )
-
-        .data(
-          visibleNodes,
-          node =>
-            node.data.pathId
-        )
-
-        .enter()
-
-        .append(
-          'g'
-        )
-
-        .attr(
-          'class',
-          'hierarchy-card'
-        )
-
-        .attr(
-          'transform',
-          node =>
-            `translate(
-              ${node.x},
-              ${
-                node.y -
-                hierarchyYOffset
-              }
-            )`
-        )
-
-        .style(
-          'cursor',
-          'pointer'
-        )
+    const cards = nodesGroup
+      .selectAll<
+        SVGGElement,
+        d3.HierarchyPointNode<HierarchyViewNode>
+      >('g.hierarchy-card')
+      .data(
+        visibleNodes,
+        node => node.data.viewPathId
+      )
+      .enter()
+      .append('g')
+      .attr('class', 'hierarchy-card')
+      .attr(
+        'transform',
+        node =>
+          `translate(${node.x}, ${
+            node.y - hierarchyYOffset
+          })`
+      )
+      .style('cursor', 'pointer')
+      .on('click', (event, node) => {
+        event.stopPropagation();
+        this.scheduleSingleClick(node);
+      })
+      .on('dblclick', (event, node) => {
+        event.preventDefault();
+        event.stopPropagation();
 
 
-        /* ------------------------------------------------------------------ */
-        /* SINGLE CLICK                                                       */
-        /* ------------------------------------------------------------------ */
-
-        .on(
-          'click',
-          (
-            event,
-            node
-          ) => {
-
-            event.stopPropagation();
+        this.cancelPendingClick();
 
 
-            this.scheduleSingleClick(
-              node
-            );
-
-          }
-        )
-
-
-        /* ------------------------------------------------------------------ */
-        /* DOUBLE CLICK                                                       */
-        /* ------------------------------------------------------------------ */
-
-        .on(
-          'dblclick',
-          (
-            event,
-            node
-          ) => {
-
-            event.preventDefault();
-
-            event.stopPropagation();
-
-
-            this.cancelPendingClick();
-
-
-            if (
-              node.data.structure
-            ) {
-
-              this.openStructureDetail(
-                node.data.structure
-              );
-
-            }
-
-          }
-        );
+        if (node.data.structure) {
+          this.openStructureDetail(
+            node.data.structure
+          );
+        }
+      });
 
 
     /* ====================================================================== */
-    /* SHADOW                                                                 */
+    /* CARD SHADOW                                                            */
     /* ====================================================================== */
 
     cards
-      .append(
-        'rect'
-      )
-
+      .append('rect')
       .attr(
         'x',
-        -this.CARD_WIDTH / 2 +
-        3
+        -this.CARD_WIDTH / 2 + 3
       )
-
       .attr(
         'y',
-        -this.CARD_HEIGHT / 2 +
-        4
+        -this.CARD_HEIGHT / 2 + 4
       )
-
-      .attr(
-        'width',
-        this.CARD_WIDTH
-      )
-
-      .attr(
-        'height',
-        this.CARD_HEIGHT
-      )
-
-      .attr(
-        'rx',
-        12
-      )
-
+      .attr('width', this.CARD_WIDTH)
+      .attr('height', this.CARD_HEIGHT)
+      .attr('rx', 12)
       .attr(
         'fill',
         'rgba(0,0,0,0.06)'
@@ -2162,487 +1667,268 @@ export class GraphsComponent
 
 
     /* ====================================================================== */
-    /* CARD                                                                   */
+    /* CARD BACKGROUND                                                        */
     /* ====================================================================== */
 
     cards
-      .append(
-        'rect'
-      )
-
+      .append('rect')
       .attr(
         'x',
         -this.CARD_WIDTH / 2
       )
-
       .attr(
         'y',
         -this.CARD_HEIGHT / 2
       )
-
-      .attr(
-        'width',
-        this.CARD_WIDTH
+      .attr('width', this.CARD_WIDTH)
+      .attr('height', this.CARD_HEIGHT)
+      .attr('rx', 12)
+      .attr('fill', node =>
+        node.data.viewPathId ===
+        state.selectedViewPathId
+          ? '#eef2ff'
+          : '#ffffff'
       )
-
-      .attr(
-        'height',
-        this.CARD_HEIGHT
+      .attr('stroke', node =>
+        node.data.viewPathId ===
+        state.selectedViewPathId
+          ? '#3f51b5'
+          : '#d9dde5'
       )
-
-      .attr(
-        'rx',
-        12
-      )
-
-      .attr(
-        'fill',
-        node =>
-
-          node.data.pathId ===
-          this.selectedPathId
-
-            ? '#eef2ff'
-            : '#ffffff'
-      )
-
-      .attr(
-        'stroke',
-        node =>
-
-          node.data.pathId ===
-          this.selectedPathId
-
-            ? '#3f51b5'
-            : '#d9dde5'
-      )
-
-      .attr(
-        'stroke-width',
-        node =>
-
-          node.data.pathId ===
-          this.selectedPathId
-
-            ? 2.5
-            : 1.5
+      .attr('stroke-width', node =>
+        node.data.viewPathId ===
+        state.selectedViewPathId
+          ? 2.5
+          : 1.5
       );
 
 
     /* ====================================================================== */
-    /* K TITLE                                                                */
+    /* TITLE                                                                  */
     /* ====================================================================== */
 
     cards
-      .append(
-        'text'
-      )
-
+      .append('text')
       .attr(
         'x',
-        -this.CARD_WIDTH / 2 +
-        14
+        -this.CARD_WIDTH / 2 + 14
       )
-
       .attr(
         'y',
-        -this.CARD_HEIGHT / 2 +
-        23
+        -this.CARD_HEIGHT / 2 + 23
       )
-
       .attr(
         'font-family',
         'Roboto, Helvetica Neue, sans-serif'
       )
-
-      .attr(
-        'font-size',
-        15
-      )
-
-      .attr(
-        'font-weight',
-        700
-      )
-
-      .attr(
-        'fill',
-        '#111827'
-      )
-
-      .text(
-        node =>
-          `K${
-            node.data.structure
-              ?.size ?? 0
-          }`
-      );
-
-
-    /* ====================================================================== */
-    /* STATS                                                                  */
-    /* ====================================================================== */
-
-    cards
-      .append(
-        'text'
-      )
-
-      .attr(
-        'x',
-        -this.CARD_WIDTH / 2 +
-        14
-      )
-
-      .attr(
-        'y',
-        -this.CARD_HEIGHT / 2 +
-        41
-      )
-
-      .attr(
-        'font-family',
-        'Roboto, Helvetica Neue, sans-serif'
-      )
-
-      .attr(
-        'font-size',
-        10
-      )
-
-      .attr(
-        'fill',
-        '#9ca3af'
-      )
-
-      .text(
-        node => {
-
-          const structure =
-            node.data.structure;
-
-
-          if (!structure) {
-            return '';
-          }
-
-
-          return (
-            `${structure.size} vrcholov · ` +
-            `${structure.edges.length} hrán`
-          );
-
-        }
-      );
-
-
-    /* ====================================================================== */
-    /* EXPAND BUTTON                                                          */
-    /* ====================================================================== */
-
-    const expandable =
-      cards.filter(
-        node => {
-
-          if (
-            !node.data.structure
-          ) {
-
-            return false;
-
-          }
-
-
-          return (
-            this.getDirectChildren(
+      .attr('font-size', 15)
+      .attr('font-weight', 700)
+      .attr('fill', '#111827')
+      .text(node =>
+        node.data.structure
+          ? this.getStructureTitle(
               node.data.structure
-            ).length > 0
-          );
-
-        }
+            )
+          : ''
       );
 
 
-    expandable
-      .append(
-        'circle'
-      )
-
-      .attr(
-        'cx',
-        this.CARD_WIDTH / 2 -
-        20
-      )
-
-      .attr(
-        'cy',
-        -this.CARD_HEIGHT / 2 +
-        22
-      )
-
-      .attr(
-        'r',
-        11
-      )
-
-      .attr(
-        'fill',
-        node =>
-
-          this.expandedPaths.has(
-            node.data.pathId
-          )
-
-            ? '#3f51b5'
-            : '#eef2ff'
-      )
-
-      .attr(
-        'stroke',
-        '#3f51b5'
-      );
-
-
-    expandable
-      .append(
-        'text'
-      )
-
+    cards
+      .append('text')
       .attr(
         'x',
-        this.CARD_WIDTH / 2 -
-        20
+        -this.CARD_WIDTH / 2 + 14
       )
-
       .attr(
         'y',
-        -this.CARD_HEIGHT / 2 +
-        26
+        -this.CARD_HEIGHT / 2 + 41
       )
-
       .attr(
-        'text-anchor',
-        'middle'
+        'font-family',
+        'Roboto, Helvetica Neue, sans-serif'
       )
-
-      .attr(
-        'font-size',
-        16
-      )
-
-      .attr(
-        'font-weight',
-        600
-      )
-
-      .attr(
-        'fill',
-        node =>
-
-          this.expandedPaths.has(
-            node.data.pathId
-          )
-
-            ? '#ffffff'
-            : '#3f51b5'
-      )
-
-      .text(
-        node =>
-
-          this.expandedPaths.has(
-            node.data.pathId
-          )
-
-            ? '−'
-            : '+'
-      );
-
-
-    /* ====================================================================== */
-    /* MINI GRAPH                                                             */
-    /* ====================================================================== */
-
-    cards.each(
-      (
-        hierarchyNode,
-        index,
-        elements
-      ) => {
-
-        const structure =
-          hierarchyNode
-            .data
-            .structure;
-
+      .attr('font-size', 10)
+      .attr('fill', '#9ca3af')
+      .text(node => {
+        const structure = node.data.structure;
 
         if (!structure) {
-          return;
+          return '';
         }
 
-
-        const card =
-          d3.select(
-            elements[
-              index
-            ] as SVGGElement
-          );
+        return this.getStructureStats(
+          structure
+        );
+      });
 
 
-        this.drawMiniGraph(
+    /* ====================================================================== */
+    /* EXPAND INDICATOR                                                       */
+    /* ====================================================================== */
+
+    const expandable = cards.filter(node => {
+      const structure = node.data.structure;
+
+      if (!structure) {
+        return false;
+      }
+
+      return this.getDirectChildren(
+        structure,
+        state
+      ).length > 0;
+    });
+
+
+    expandable
+      .append('circle')
+      .attr(
+        'cx',
+        this.CARD_WIDTH / 2 - 20
+      )
+      .attr(
+        'cy',
+        -this.CARD_HEIGHT / 2 + 22
+      )
+      .attr('r', 11)
+      .attr('fill', node =>
+        state.expandedViewPaths.has(
+          node.data.viewPathId
+        )
+          ? '#3f51b5'
+          : '#eef2ff'
+      )
+      .attr('stroke', '#3f51b5');
+
+
+    expandable
+      .append('text')
+      .attr(
+        'x',
+        this.CARD_WIDTH / 2 - 20
+      )
+      .attr(
+        'y',
+        -this.CARD_HEIGHT / 2 + 26
+      )
+      .attr('text-anchor', 'middle')
+      .attr('font-size', 16)
+      .attr('font-weight', 600)
+      .attr('fill', node =>
+        state.expandedViewPaths.has(
+          node.data.viewPathId
+        )
+          ? '#ffffff'
+          : '#3f51b5'
+      )
+      .text(node =>
+        state.expandedViewPaths.has(
+          node.data.viewPathId
+        )
+          ? '−'
+          : '+'
+      );
+
+
+    /* ====================================================================== */
+    /* MINI VISUALIZATION                                                     */
+    /* ====================================================================== */
+
+    cards.each((hierarchyNode, index, elements) => {
+      const structure =
+        hierarchyNode.data.structure;
+
+
+      if (!structure) {
+        return;
+      }
+
+
+      const card = d3.select<
+        SVGGElement,
+        unknown
+      >(
+        elements[index] as SVGGElement
+      );
+
+
+      if (structure.kind === 'path') {
+        this.drawMiniPath(
           card,
           structure
         );
-
       }
-    );
+      else if (structure.kind === 'hotspot') {
+        this.drawMiniHotspot(
+          card,
+          structure
+        );
+      }
+      else {
+        this.drawMiniNPtych(
+          card,
+          structure
+        );
+      }
+    });
 
 
     /* ====================================================================== */
     /* OPEN BUTTON                                                            */
     /* ====================================================================== */
 
-    const openButtons =
-      cards
-        .append(
-          'g'
-        )
-
-        .attr(
-          'class',
-          'open-structure-button'
-        )
-
-        .attr(
-          'transform',
-          `translate(
-            ${
-              this.CARD_WIDTH / 2 -
-              48
-            },
-            ${
-              this.CARD_HEIGHT / 2 -
-              19
-            }
-          )`
-        )
-
-        .style(
-          'cursor',
-          'pointer'
-        )
-
-        .on(
-          'click',
-          (
-            event,
-            node
-          ) => {
-
-            event.stopPropagation();
+    const openButtons = cards
+      .append('g')
+      .attr(
+        'class',
+        'open-structure-button'
+      )
+      .attr(
+        'transform',
+        `translate(${
+          this.CARD_WIDTH / 2 - 48
+        }, ${
+          this.CARD_HEIGHT / 2 - 19
+        })`
+      )
+      .style('cursor', 'pointer')
+      .on('click', (event, node) => {
+        event.stopPropagation();
+        this.cancelPendingClick();
 
 
-            this.cancelPendingClick();
-
-
-            if (
-              node.data.structure
-            ) {
-
-              this.openStructureDetail(
-                node.data.structure
-              );
-
-            }
-
-          }
-        );
+        if (node.data.structure) {
+          this.openStructureDetail(
+            node.data.structure
+          );
+        }
+      });
 
 
     openButtons
-      .append(
-        'rect'
-      )
-
-      .attr(
-        'x',
-        -36
-      )
-
-      .attr(
-        'y',
-        -11
-      )
-
-      .attr(
-        'width',
-        72
-      )
-
-      .attr(
-        'height',
-        22
-      )
-
-      .attr(
-        'rx',
-        6
-      )
-
-      .attr(
-        'fill',
-        '#eef2ff'
-      )
-
-      .attr(
-        'stroke',
-        '#c7cdf8'
-      );
+      .append('rect')
+      .attr('x', -36)
+      .attr('y', -11)
+      .attr('width', 72)
+      .attr('height', 22)
+      .attr('rx', 6)
+      .attr('fill', '#eef2ff')
+      .attr('stroke', '#c7cdf8');
 
 
     openButtons
-      .append(
-        'text'
-      )
-
-      .attr(
-        'x',
-        0
-      )
-
-      .attr(
-        'y',
-        4
-      )
-
-      .attr(
-        'text-anchor',
-        'middle'
-      )
-
+      .append('text')
+      .attr('x', 0)
+      .attr('y', 4)
+      .attr('text-anchor', 'middle')
       .attr(
         'font-family',
         'Roboto, Helvetica Neue, sans-serif'
       )
-
-      .attr(
-        'font-size',
-        10
-      )
-
-      .attr(
-        'font-weight',
-        600
-      )
-
-      .attr(
-        'fill',
-        '#3f51b5'
-      )
-
-      .text(
-        'Otvoriť'
-      );
+      .attr('font-size', 10)
+      .attr('font-weight', 600)
+      .attr('fill', '#3f51b5')
+      .text('Otvoriť');
 
 
     /* ====================================================================== */
@@ -2650,129 +1936,73 @@ export class GraphsComponent
     /* ====================================================================== */
 
     cards
-      .append(
-        'text'
-      )
-
+      .append('text')
       .attr(
         'x',
-        -this.CARD_WIDTH / 2 +
-        14
+        -this.CARD_WIDTH / 2 + 14
       )
-
       .attr(
         'y',
-        this.CARD_HEIGHT / 2 -
-        14
+        this.CARD_HEIGHT / 2 - 14
       )
-
-      .attr(
-        'text-anchor',
-        'start'
-      )
-
+      .attr('text-anchor', 'start')
       .attr(
         'font-family',
         'Roboto, Helvetica Neue, sans-serif'
       )
-
-      .attr(
-        'font-size',
-        9
-      )
-
-      .attr(
-        'fill',
-        '#6b7280'
-      )
-
-      .text(
-        node =>
-
-          this.formatMemberList(
-            node.data.structure
-              ?.members ?? []
-          )
+      .attr('font-size', 9)
+      .attr('fill', '#6b7280')
+      .text(node =>
+        this.formatMemberList(
+          node.data.structure?.members ?? [],
+          node.data.structure?.kind ?? 'n-ptych'
+        )
       );
 
-
-    /* ====================================================================== */
-    /* TOOLTIP                                                                */
-    /* ====================================================================== */
 
     cards
-      .append(
-        'title'
-      )
+      .append('title')
+      .text(node => {
+        const structure = node.data.structure;
 
-      .text(
-        node => {
-
-          const structure =
-            node.data.structure;
-
-
-          if (!structure) {
-            return '';
-          }
-
-
-          return (
-            `K${structure.size}\n` +
-            structure.members.join(
-              '\n'
-            ) +
-            '\n\nDvojklikom otvor graf'
-          );
-
+        if (!structure) {
+          return '';
         }
-      );
 
 
-    /* ====================================================================== */
-    /* INFO                                                                   */
-    /* ====================================================================== */
+        const separator =
+          structure.kind === 'path'
+            ? ' → '
+            : structure.kind === 'hotspot'
+              ? ' · '
+              : ', ';
 
-    const help =
-      svg
-        .append(
-          'text'
-        )
 
-        .attr(
-          'x',
-          20
-        )
-
-        .attr(
-          'y',
-          height - 20
-        )
-
-        .attr(
-          'font-family',
-          'Roboto, Helvetica Neue, sans-serif'
-        )
-
-        .attr(
-          'font-size',
-          11
-        )
-
-        .attr(
-          'fill',
-          '#9ca3af'
-        )
-
-        .text(
-          'Klik = rozbaliť · Dvojklik = otvoriť graf · Koliesko = zoom · Drag pozadia = pohyb'
+        return (
+          `${this.getStructureTitle(structure)}\n` +
+          structure.members.join(separator) +
+          '\n\nDvojklikom otvor graf'
         );
+      });
 
 
-    help
-      .style(
-        'pointer-events',
-        'none'
+    /* ====================================================================== */
+    /* HELP                                                                   */
+    /* ====================================================================== */
+
+    svg
+      .append('text')
+      .attr('x', 20)
+      .attr('y', height - 20)
+      .attr(
+        'font-family',
+        'Roboto, Helvetica Neue, sans-serif'
+      )
+      .attr('font-size', 11)
+      .attr('fill', '#9ca3af')
+      .style('pointer-events', 'none')
+      .text(
+        'Klik = rozbaliť · Dvojklik = otvoriť graf · Koliesko = zoom · Drag pozadia = pohyb'
       );
 
 
@@ -2784,247 +2014,338 @@ export class GraphsComponent
       resetView &&
       visibleNodes.length > 0
     ) {
-
       this.fitHierarchyToView(
         svg,
         zoomBehavior,
         visibleNodes,
         width,
         height,
-        hierarchyYOffset
+        hierarchyYOffset,
+        state
       );
-
     }
-
   }
 
 
   /* ======================================================================== */
-  /* MINI GRAPH                                                               */
+  /* MINI N-PTYCH                                                             */
   /* ======================================================================== */
 
-  private drawMiniGraph(
-    card:
-      d3.Selection<
-        SVGGElement,
-        any,
-        any,
-        any
-      >,
-
-    structure:
-      NPtychStructure
+  private drawMiniNPtych(
+    card: d3.Selection<
+      SVGGElement,
+      unknown,
+      null,
+      undefined
+    >,
+    structure: AnalysisStructure
   ): void {
 
-    const graph =
-      card
-        .append(
-          'g'
-        )
-
-        .attr(
-          'class',
-          'mini-graph'
-        );
+    const graph = card
+      .append('g')
+      .attr('class', 'mini-graph');
 
 
-    const centerX =
-      0;
-
-
-    const centerY =
-      10;
-
-
-    const radius =
-      30;
+    const centerX = 0;
+    const centerY = 10;
+    const radius = 30;
 
 
     const positions =
-      new Map<
-        string,
-        {
-          x: number;
-          y: number;
-        }
-      >();
+      new Map<string, { x: number; y: number }>();
 
 
-    structure.members.forEach(
-      (
-        member,
-        index
-      ) => {
-
-        const angle =
-          (
-            2 *
-            Math.PI *
-            index
-          ) /
-          structure.members.length
-          -
-          Math.PI / 2;
+    structure.members.forEach((member, index) => {
+      const angle =
+        (2 * Math.PI * index) /
+        structure.members.length -
+        Math.PI / 2;
 
 
-        positions.set(
-          member,
-          {
+      positions.set(member, {
+        x:
+          centerX +
+          Math.cos(angle) * radius,
+        y:
+          centerY +
+          Math.sin(angle) * radius
+      });
+    });
 
-            x:
-              centerX +
-              Math.cos(
-                angle
-              ) *
-              radius,
 
-            y:
-              centerY +
-              Math.sin(
-                angle
-              ) *
-              radius
+    graph
+      .selectAll<SVGLineElement, NormalizedEdge>('line')
+      .data(structure.edges)
+      .enter()
+      .append('line')
+      .attr('x1', edge =>
+        positions.get(edge.source)?.x ?? 0
+      )
+      .attr('y1', edge =>
+        positions.get(edge.source)?.y ?? 0
+      )
+      .attr('x2', edge =>
+        positions.get(edge.target)?.x ?? 0
+      )
+      .attr('y2', edge =>
+        positions.get(edge.target)?.y ?? 0
+      )
+      .attr('stroke', edge =>
+        edge.correlation >= 0
+          ? '#6574d9'
+          : '#d96b6b'
+      )
+      .attr('stroke-width', edge =>
+        1 + Math.abs(edge.correlation) * 1.2
+      )
+      .attr('stroke-opacity', 0.75);
 
-          }
-        );
 
+    graph
+      .selectAll<SVGCircleElement, string>('circle')
+      .data(structure.members)
+      .enter()
+      .append('circle')
+      .attr('cx', member =>
+        positions.get(member)?.x ?? 0
+      )
+      .attr('cy', member =>
+        positions.get(member)?.y ?? 0
+      )
+      .attr('r', 6)
+      .attr('fill', '#ffffff')
+      .attr('stroke', '#3f51b5')
+      .attr('stroke-width', 2);
+  }
+
+
+  /* ======================================================================== */
+  /* MINI PATH                                                                */
+  /* ======================================================================== */
+
+  private drawMiniPath(
+    card: d3.Selection<
+      SVGGElement,
+      unknown,
+      null,
+      undefined
+    >,
+    structure: AnalysisStructure
+  ): void {
+
+    const graph = card
+      .append('g')
+      .attr('class', 'mini-path');
+
+
+    const centerY = 12;
+    const availableWidth = 112;
+
+
+    const count = structure.members.length;
+
+
+    const spacing =
+      count <= 1
+        ? 0
+        : availableWidth / (count - 1);
+
+
+    const startX = -availableWidth / 2;
+
+
+    const positions = new Map<
+      string,
+      { x: number; y: number }
+    >();
+
+
+    structure.members.forEach((member, index) => {
+      positions.set(member, {
+        x:
+          count <= 1
+            ? 0
+            : startX + index * spacing,
+        y: centerY
+      });
+    });
+
+
+    structure.edges.forEach(edge => {
+      const source = positions.get(edge.source);
+      const target = positions.get(edge.target);
+
+
+      if (!source || !target) {
+        return;
       }
+
+
+      graph
+        .append('line')
+        .attr('x1', source.x)
+        .attr('y1', source.y)
+        .attr('x2', target.x)
+        .attr('y2', target.y)
+        .attr(
+          'stroke',
+          edge.correlation >= 0
+            ? '#6574d9'
+            : '#d96b6b'
+        )
+        .attr(
+          'stroke-width',
+          1 + Math.abs(edge.correlation) * 1.3
+        )
+        .attr('stroke-opacity', 0.8);
+    });
+
+
+    structure.members.forEach(member => {
+      const position = positions.get(member);
+
+      if (!position) {
+        return;
+      }
+
+
+      graph
+        .append('circle')
+        .attr('cx', position.x)
+        .attr('cy', position.y)
+        .attr('r', 6)
+        .attr('fill', '#ffffff')
+        .attr('stroke', '#3f51b5')
+        .attr('stroke-width', 2);
+    });
+  }
+
+
+  /* ======================================================================== */
+  /* MINI HOTSPOT                                                             */
+  /* ======================================================================== */
+
+  private drawMiniHotspot(
+    card: d3.Selection<
+      SVGGElement,
+      unknown,
+      null,
+      undefined
+    >,
+    structure: AnalysisStructure
+  ): void {
+
+    const graph = card
+      .append('g')
+      .attr('class', 'mini-hotspot');
+
+
+    const centerId = structure.centerId;
+
+
+    if (!centerId) {
+      return;
+    }
+
+
+    const leaves = structure.members.filter(
+      member => member !== centerId
     );
 
 
-    /* ====================================================================== */
-    /* EDGES                                                                  */
-    /* ====================================================================== */
+    const center = {
+      x: 0,
+      y: 12
+    };
 
-    graph
-      .selectAll(
-        'line'
-      )
 
-      .data(
-        structure.edges
-      )
+    const radius = 36;
 
-      .enter()
 
-      .append(
-        'line'
-      )
+    const positions = new Map<
+      string,
+      { x: number; y: number }
+    >();
 
-      .attr(
-        'x1',
-        edge =>
-          positions.get(
-            edge.source
-          )?.x ?? 0
-      )
 
-      .attr(
-        'y1',
-        edge =>
-          positions.get(
-            edge.source
-          )?.y ?? 0
-      )
+    positions.set(
+      centerId,
+      center
+    );
 
-      .attr(
-        'x2',
-        edge =>
-          positions.get(
-            edge.target
-          )?.x ?? 0
-      )
 
-      .attr(
-        'y2',
-        edge =>
-          positions.get(
-            edge.target
-          )?.y ?? 0
-      )
+    leaves.forEach((leaf, index) => {
+      const angle =
+        (2 * Math.PI * index) /
+        leaves.length -
+        Math.PI / 2;
 
-      .attr(
-        'stroke',
-        edge =>
 
+      positions.set(leaf, {
+        x: center.x + Math.cos(angle) * radius,
+        y: center.y + Math.sin(angle) * radius
+      });
+    });
+
+
+    structure.edges.forEach(edge => {
+      const source = positions.get(edge.source);
+      const target = positions.get(edge.target);
+
+
+      if (!source || !target) {
+        return;
+      }
+
+
+      graph
+        .append('line')
+        .attr('x1', source.x)
+        .attr('y1', source.y)
+        .attr('x2', target.x)
+        .attr('y2', target.y)
+        .attr(
+          'stroke',
           edge.correlation >= 0
-
             ? '#6574d9'
             : '#d96b6b'
-      )
-
-      .attr(
-        'stroke-width',
-        edge =>
-
-          1 +
-          Math.abs(
-            edge.correlation
-          ) *
-          1.2
-      )
-
-      .attr(
-        'stroke-opacity',
-        0.75
-      );
+        )
+        .attr(
+          'stroke-width',
+          1 + Math.abs(edge.correlation) * 1.3
+        )
+        .attr('stroke-opacity', 0.8);
+    });
 
 
-    /* ====================================================================== */
-    /* NODES                                                                  */
-    /* ====================================================================== */
+    leaves.forEach(leaf => {
+      const position = positions.get(leaf);
+
+
+      if (!position) {
+        return;
+      }
+
+
+      graph
+        .append('circle')
+        .attr('cx', position.x)
+        .attr('cy', position.y)
+        .attr('r', 5.5)
+        .attr('fill', '#ffffff')
+        .attr('stroke', '#6574d9')
+        .attr('stroke-width', 1.8);
+    });
+
 
     graph
-      .selectAll(
-        'circle'
-      )
-
-      .data(
-        structure.members
-      )
-
-      .enter()
-
-      .append(
-        'circle'
-      )
-
-      .attr(
-        'cx',
-        member =>
-          positions.get(
-            member
-          )?.x ?? 0
-      )
-
-      .attr(
-        'cy',
-        member =>
-          positions.get(
-            member
-          )?.y ?? 0
-      )
-
-      .attr(
-        'r',
-        6
-      )
-
-      .attr(
-        'fill',
-        '#ffffff'
-      )
-
-      .attr(
-        'stroke',
-        '#3f51b5'
-      )
-
-      .attr(
-        'stroke-width',
-        2
-      );
-
+      .append('circle')
+      .attr('cx', center.x)
+      .attr('cy', center.y)
+      .attr('r', 8)
+      .attr('fill', '#eef2ff')
+      .attr('stroke', '#3f51b5')
+      .attr('stroke-width', 2.4);
   }
 
 
@@ -3033,20 +2354,15 @@ export class GraphsComponent
   /* ======================================================================== */
 
   private renderStructureDetail(
-    structure:
-      NPtychStructure,
-
-    resetView:
-      boolean
+    structure: AnalysisStructure,
+    resetView: boolean
   ): void {
 
     if (
       !this.svgRef ||
       !this.graphContainerRef
     ) {
-
       return;
-
     }
 
 
@@ -3054,297 +2370,244 @@ export class GraphsComponent
 
 
     const container =
-      this.graphContainerRef
-        .nativeElement;
+      this.graphContainerRef.nativeElement;
 
 
-    const width =
-      container.clientWidth;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
 
 
-    const height =
-      container.clientHeight;
-
-
-    if (
-      width <= 0 ||
-      height <= 0
-    ) {
-
+    if (width <= 0 || height <= 0) {
       return;
-
     }
 
 
     if (resetView) {
-
-      this.detailTransform =
-        d3.zoomIdentity;
-
+      this.detailTransform = d3.zoomIdentity;
     }
 
 
-    const svg =
-      d3
-        .select(
-          this.svgRef.nativeElement
-        )
+    const svg = d3
+      .select(this.svgRef.nativeElement)
+      .attr('width', width)
+      .attr('height', height)
+      .attr(
+        'viewBox',
+        `0 0 ${width} ${height}`
+      );
 
-        .attr(
-          'width',
-          width
-        )
 
-        .attr(
-          'height',
-          height
-        )
+    svg.selectAll('*').remove();
 
-        .attr(
-          'viewBox',
-          `0 0 ${width} ${height}`
+
+    /* ====================================================================== */
+    /* INITIAL NODE POSITIONS                                                 */
+    /* ====================================================================== */
+
+    const centerX = width / 2;
+    const centerY = height / 2;
+
+
+    const nodes: DetailNode[] =
+      structure.members.map((member, index) => {
+        const lines = this.wrapAttributeLabel(
+          member,
+          this.ATTRIBUTE_LINE_LENGTH
         );
 
 
-    svg
-      .selectAll('*')
-      .remove();
+        const boxHeight = Math.max(
+          64,
+          30 + lines.length * 18
+        );
 
 
-    /* ====================================================================== */
-    /* DATA                                                                   */
-    /* ====================================================================== */
+        if (structure.kind === 'path') {
+          const desiredSpacing = 225;
 
-    const centerX =
-      width / 2;
-
-
-    const centerY =
-      height / 2;
+          const pathWidth =
+            (structure.members.length - 1) *
+            desiredSpacing;
 
 
-    /*
-     * Vrcholy detailu nezačnú na D3 default pozíciách pri 0,0.
-     * Rozložíme ich rovno okolo stredu viewportu, takže graf
-     * po otvorení nevyzerá, že priletel z pravého dolného rohu.
-     */
-    const initialRadius =
-      Math.max(
-        150,
-        structure.size *
-        42
-      );
-
-
-    const nodes:
-      DetailNode[] =
-      structure.members.map(
-        (
-          member,
-          index
-        ) => {
-
-          const lines =
-            this.wrapAttributeLabel(
-              member,
-              this.ATTRIBUTE_LINE_LENGTH
-            );
-
-
-          const angle =
-            (
-              2 *
-              Math.PI *
-              index
-            ) /
-            structure.members.length -
-            Math.PI / 2;
+          const x =
+            centerX - pathWidth / 2 +
+            index * desiredSpacing;
 
 
           return {
-
-            id:
-              member,
-
+            id: member,
             lines,
-
-            boxHeight:
-              Math.max(
-                64,
-                30 +
-                lines.length *
-                18
-              ),
-
-            x:
-              centerX +
-              Math.cos(
-                angle
-              ) *
-              initialRadius,
-
-            y:
-              centerY +
-              Math.sin(
-                angle
-              ) *
-              initialRadius
-
+            boxHeight,
+            x,
+            y: centerY,
+            targetX: x,
+            targetY: centerY
           };
-
         }
-      );
 
 
-    const edges:
-      DetailEdge[] =
-      structure.edges.map(
-        edge => ({
+        if (structure.kind === 'hotspot') {
+          const centerId = structure.centerId;
+          const isCenter = member === centerId;
 
-          source:
-            edge.source,
 
-          target:
-            edge.target,
+          if (isCenter) {
+            return {
+              id: member,
+              lines,
+              boxHeight,
+              x: centerX,
+              y: centerY,
+              targetX: centerX,
+              targetY: centerY,
+              isCenter: true
+            };
+          }
 
-          correlation:
-            edge.correlation
 
-        })
-      );
+          const leaves = structure.members.filter(
+            value => value !== centerId
+          );
+
+
+          const leafIndex = leaves.indexOf(member);
+
+
+          const hotspotRadius = Math.max(
+            210,
+            leaves.length * 52
+          );
+
+
+          const angle =
+            (2 * Math.PI * leafIndex) /
+            leaves.length -
+            Math.PI / 2;
+
+
+          const x =
+            centerX +
+            Math.cos(angle) * hotspotRadius;
+
+
+          const y =
+            centerY +
+            Math.sin(angle) * hotspotRadius;
+
+
+          return {
+            id: member,
+            lines,
+            boxHeight,
+            x,
+            y,
+            targetX: x,
+            targetY: y,
+            isCenter: false
+          };
+        }
+
+
+        const initialRadius = Math.max(
+          140,
+          structure.size * 38
+        );
+
+
+        const angle =
+          (2 * Math.PI * index) /
+          structure.members.length -
+          Math.PI / 2;
+
+
+        return {
+          id: member,
+          lines,
+          boxHeight,
+          x:
+            centerX +
+            Math.cos(angle) * initialRadius,
+          y:
+            centerY +
+            Math.sin(angle) * initialRadius
+        };
+      });
+
+
+    const edges: DetailEdge[] =
+      structure.edges.map(edge => ({
+        source: edge.source,
+        target: edge.target,
+        correlation: edge.correlation
+      }));
 
 
     /* ====================================================================== */
     /* WORLD                                                                  */
     /* ====================================================================== */
 
-    const world =
-      svg
-        .append(
-          'g'
-        )
+    const world = svg
+      .append('g')
+      .attr('class', 'detail-world')
+      .attr(
+        'transform',
+        this.detailTransform.toString()
+      );
 
-        .attr(
-          'class',
-          'detail-world'
-        )
 
-        .attr(
+    const linksGroup = world
+      .append('g')
+      .attr('class', 'detail-links');
+
+
+    const labelsGroup = world
+      .append('g')
+      .attr('class', 'detail-edge-labels');
+
+
+    const nodesGroup = world
+      .append('g')
+      .attr('class', 'detail-nodes');
+
+
+    /* ====================================================================== */
+    /* ZOOM                                                                   */
+    /* ====================================================================== */
+
+    const zoomBehavior = d3
+      .zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.2, 6])
+      .filter((event: any) => {
+        const target =
+          event.target as Element | null;
+
+
+        if (
+          event.type === 'mousedown' &&
+          target?.closest('.detail-node')
+        ) {
+          return false;
+        }
+
+
+        return true;
+      })
+      .on('zoom', event => {
+        this.detailTransform = event.transform;
+
+        world.attr(
           'transform',
-          this.detailTransform
-            .toString()
+          event.transform.toString()
         );
+      });
 
 
-    const linksGroup =
-      world
-        .append(
-          'g'
-        )
-
-        .attr(
-          'class',
-          'detail-links'
-        );
-
-
-    const labelsGroup =
-      world
-        .append(
-          'g'
-        )
-
-        .attr(
-          'class',
-          'detail-edge-labels'
-        );
-
-
-    const nodesGroup =
-      world
-        .append(
-          'g'
-        )
-
-        .attr(
-          'class',
-          'detail-nodes'
-        );
-
-
-    /* ====================================================================== */
-    /* ZOOM / PAN                                                             */
-    /* ====================================================================== */
-
-    const zoomBehavior =
-      d3
-        .zoom<
-          SVGSVGElement,
-          unknown
-        >()
-
-        .scaleExtent(
-          [
-            0.2,
-            6
-          ]
-        )
-
-        .filter(
-          (event: any) => {
-
-            const target =
-              event.target as
-                Element |
-                null;
-
-
-            if (
-              event.type ===
-                'mousedown' &&
-
-              target?.closest(
-                '.detail-node'
-              )
-            ) {
-
-              return false;
-
-            }
-
-
-            return true;
-
-          }
-        )
-
-        .on(
-          'zoom',
-          event => {
-
-            this.detailTransform =
-              event.transform;
-
-
-            world.attr(
-              'transform',
-              event.transform
-                .toString()
-            );
-
-          }
-        );
-
-
-    svg.call(
-      zoomBehavior
-    );
+    svg.call(zoomBehavior);
 
 
     /*
-     * Detail view má vlastnú kameru. Synchronizujeme aj
-     * interný D3 __zoom stav, aby prvý drag canvasu
-     * nespôsobil teleport na transform z hierarchy view.
+     * Resetuje/synchronizuje interný D3 zoom stav medzi hierarchy/detail view.
      */
     svg.call(
       zoomBehavior.transform,
@@ -3352,723 +2615,403 @@ export class GraphsComponent
     );
 
 
-    svg.on(
-      'dblclick.zoom',
-      null
-    );
+    svg.on('dblclick.zoom', null);
 
 
     /* ====================================================================== */
     /* EDGES                                                                  */
     /* ====================================================================== */
 
-    const links =
-      linksGroup
-        .selectAll<
-          SVGLineElement,
-          DetailEdge
-        >(
-          'line'
-        )
-
-        .data(
-          edges
-        )
-
-        .enter()
-
-        .append(
-          'line'
-        )
-
-        .attr(
-          'stroke',
-          edge =>
-
-            edge.correlation >= 0
-
-              ? '#596bd8'
-              : '#d45f5f'
-        )
-
-        .attr(
-          'stroke-width',
-          edge =>
-
-            2 +
-            Math.abs(
-              edge.correlation
-            ) *
-            2
-        )
-
-        .attr(
-          'stroke-opacity',
-          0.72
-        );
+    const links = linksGroup
+      .selectAll<SVGLineElement, DetailEdge>('line')
+      .data(edges)
+      .enter()
+      .append('line')
+      .attr('stroke', edge =>
+        edge.correlation >= 0
+          ? '#596bd8'
+          : '#d45f5f'
+      )
+      .attr('stroke-width', edge =>
+        2 + Math.abs(edge.correlation) * 2
+      )
+      .attr('stroke-opacity', 0.72);
 
 
     /* ====================================================================== */
-    /* CORRELATION LABELS                                                     */
+    /* EDGE LABELS                                                            */
     /* ====================================================================== */
 
-    const edgeLabels =
-      labelsGroup
-        .selectAll<
-          SVGTextElement,
-          DetailEdge
-        >(
-          'text'
-        )
-
-        .data(
-          edges
-        )
-
-        .enter()
-
-        .append(
-          'text'
-        )
-
-        .attr(
-          'text-anchor',
-          'middle'
-        )
-
-        .attr(
-          'dominant-baseline',
-          'central'
-        )
-
-        .attr(
-          'font-family',
-          'JetBrains Mono, Consolas, monospace'
-        )
-
-        .attr(
-          'font-size',
-          11
-        )
-
-        .attr(
-          'font-weight',
-          600
-        )
-
-        .attr(
-          'fill',
-          '#4b5563'
-        )
-
-        /*
-         * White outline pod textom.
-         */
-        .attr(
-          'paint-order',
-          'stroke'
-        )
-
-        .attr(
-          'stroke',
-          '#ffffff'
-        )
-
-        .attr(
-          'stroke-width',
-          5
-        )
-
-        .attr(
-          'stroke-linejoin',
-          'round'
-        )
-
-        .text(
-          edge =>
-            edge.correlation
-              .toFixed(
-                2
-              )
-        );
+    const edgeLabels = labelsGroup
+      .selectAll<SVGTextElement, DetailEdge>('text')
+      .data(edges)
+      .enter()
+      .append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
+      .attr(
+        'font-family',
+        'JetBrains Mono, Consolas, monospace'
+      )
+      .attr('font-size', 11)
+      .attr('font-weight', 600)
+      .attr('fill', '#4b5563')
+      .attr('paint-order', 'stroke')
+      .attr('stroke', '#ffffff')
+      .attr('stroke-width', 5)
+      .attr('stroke-linejoin', 'round')
+      .text(edge =>
+        edge.correlation.toFixed(2)
+      );
 
 
     /* ====================================================================== */
-    /* DETAIL NODES                                                           */
+    /* RECTANGULAR NODES                                                      */
     /* ====================================================================== */
 
-    const nodeGroups =
-      nodesGroup
-        .selectAll<
-          SVGGElement,
-          DetailNode
-        >(
-          'g.detail-node'
-        )
+    const nodeGroups = nodesGroup
+      .selectAll<SVGGElement, DetailNode>(
+        'g.detail-node'
+      )
+      .data(nodes)
+      .enter()
+      .append('g')
+      .attr('class', 'detail-node')
+      .style('cursor', 'grab');
 
-        .data(
-          nodes
-        )
-
-        .enter()
-
-        .append(
-          'g'
-        )
-
-        .attr(
-          'class',
-          'detail-node'
-        )
-
-        .style(
-          'cursor',
-          'grab'
-        );
-
-
-    /* ====================================================================== */
-    /* NODE SHADOW                                                            */
-    /* ====================================================================== */
 
     nodeGroups
-      .append(
-        'rect'
-      )
-
+      .append('rect')
       .attr(
         'x',
-        -this.DETAIL_NODE_WIDTH /
-        2 +
-        3
+        -this.DETAIL_NODE_WIDTH / 2 + 3
       )
-
-      .attr(
-        'y',
-        node =>
-          -node.boxHeight /
-          2 +
-          4
+      .attr('y', node =>
+        -node.boxHeight / 2 + 4
       )
-
-      .attr(
-        'width',
-        this.DETAIL_NODE_WIDTH
-      )
-
-      .attr(
-        'height',
-        node =>
-          node.boxHeight
-      )
-
-      .attr(
-        'rx',
-        10
-      )
-
+      .attr('width', this.DETAIL_NODE_WIDTH)
+      .attr('height', node => node.boxHeight)
+      .attr('rx', 10)
       .attr(
         'fill',
         'rgba(0,0,0,0.08)'
       );
 
 
-    /* ====================================================================== */
-    /* NODE RECTANGLE                                                         */
-    /* ====================================================================== */
-
     nodeGroups
-      .append(
-        'rect'
-      )
-
+      .append('rect')
       .attr(
         'x',
-        -this.DETAIL_NODE_WIDTH /
-        2
+        -this.DETAIL_NODE_WIDTH / 2
       )
-
-      .attr(
-        'y',
-        node =>
-          -node.boxHeight /
-          2
+      .attr('y', node =>
+        -node.boxHeight / 2
       )
-
-      .attr(
-        'width',
-        this.DETAIL_NODE_WIDTH
+      .attr('width', this.DETAIL_NODE_WIDTH)
+      .attr('height', node => node.boxHeight)
+      .attr('rx', 10)
+      .attr('fill', node =>
+        node.isCenter
+          ? '#eef2ff'
+          : '#ffffff'
       )
-
-      .attr(
-        'height',
-        node =>
-          node.boxHeight
+      .attr('stroke', node =>
+        node.isCenter
+          ? '#3f51b5'
+          : '#6574d9'
       )
-
-      .attr(
-        'rx',
-        10
-      )
-
-      .attr(
-        'fill',
-        '#ffffff'
-      )
-
-      .attr(
-        'stroke',
-        '#3f51b5'
-      )
-
-      .attr(
-        'stroke-width',
-        2.5
+      .attr('stroke-width', node =>
+        node.isCenter
+          ? 3
+          : 2.5
       );
 
 
+    nodeGroups.each((node, index, elements) => {
+      const group = d3.select<
+        SVGGElement,
+        unknown
+      >(
+        elements[index] as SVGGElement
+      );
+
+
+      const text = group
+        .append('text')
+        .attr('text-anchor', 'middle')
+        .attr(
+          'font-family',
+          'Roboto, Helvetica Neue, sans-serif'
+        )
+        .attr('font-size', 13)
+        .attr('font-weight', 600)
+        .attr('fill', '#1f2937');
+
+
+      const lineHeight = 18;
+
+
+      const totalHeight =
+        (node.lines.length - 1) *
+        lineHeight;
+
+
+      node.lines.forEach((line, lineIndex) => {
+        text
+          .append('tspan')
+          .attr('x', 0)
+          .attr(
+            'y',
+            lineIndex * lineHeight -
+            totalHeight / 2 +
+            4
+          )
+          .text(line);
+      });
+    });
+
+
     /* ====================================================================== */
-    /* ATTRIBUTE TEXT                                                         */
+    /* SIMULATION                                                             */
     /* ====================================================================== */
 
-    nodeGroups.each(
-      (
-        node,
-        index,
-        elements
-      ) => {
+    const simulation = d3
+      .forceSimulation<DetailNode>(nodes)
+      .force(
+        'link',
+        d3
+          .forceLink<DetailNode, DetailEdge>(edges)
+          .id(node => node.id)
+          .distance(
+            structure.kind === 'path'
+              ? 225
+              : structure.kind === 'hotspot'
+                ? 230
+                : 240
+          )
+          .strength(
+            structure.kind === 'path'
+              ? 0.85
+              : structure.kind === 'hotspot'
+                ? 0.9
+                : 0.6
+          )
+      )
+      .force(
+        'charge',
+        d3
+          .forceManyBody()
+          .strength(
+            structure.kind === 'path'
+              ? -300
+              : structure.kind === 'hotspot'
+                ? -500
+                : -900
+          )
+      )
+      .force(
+        'collision',
+        d3
+          .forceCollide<DetailNode>()
+          .radius(node => {
+            const halfWidth =
+              this.DETAIL_NODE_WIDTH / 2;
 
-        const group =
-          d3.select(
-            elements[
-              index
-            ] as SVGGElement
-          );
+
+            const halfHeight =
+              node.boxHeight / 2;
 
 
-        const text =
-          group
-            .append(
-              'text'
-            )
-
-            .attr(
-              'text-anchor',
-              'middle'
-            )
-
-            .attr(
-              'font-family',
-              'Roboto, Helvetica Neue, sans-serif'
-            )
-
-            .attr(
-              'font-size',
-              13
-            )
-
-            .attr(
-              'font-weight',
-              600
-            )
-
-            .attr(
-              'fill',
-              '#1f2937'
+            return (
+              Math.sqrt(
+                halfWidth * halfWidth +
+                halfHeight * halfHeight
+              ) +
+              25
             );
+          })
+      );
 
 
-        const lineHeight =
-          18;
-
-
-        const totalHeight =
-          (
-            node.lines.length -
-            1
-          ) *
-          lineHeight;
-
-
-        node.lines.forEach(
-          (
-            line,
-            lineIndex
-          ) => {
-
-            text
-              .append(
-                'tspan'
-              )
-
-              .attr(
-                'x',
-                0
-              )
-
-              .attr(
-                'y',
-                (
-                  lineIndex *
-                  lineHeight
-                ) -
-                totalHeight /
-                2 +
-                4
-              )
-
-              .text(
-                line
-              );
-
-          }
+    if (structure.kind === 'path') {
+      /*
+       * Cesta sa drží ako reálna sekvencia zľava doprava.
+       */
+      simulation
+        .force(
+          'x',
+          d3
+            .forceX<DetailNode>(
+              node => node.targetX ?? centerX
+            )
+            .strength(0.35)
+        )
+        .force(
+          'y',
+          d3
+            .forceY<DetailNode>(
+              node => node.targetY ?? centerY
+            )
+            .strength(0.45)
         );
-
-      }
-    );
-
-
-    /* ====================================================================== */
-    /* FORCE SIMULATION                                                       */
-    /* ====================================================================== */
-
-    this.detailSimulation =
-      d3
-        .forceSimulation<
-          DetailNode
-        >(
-          nodes
-        )
-
+    }
+    else if (structure.kind === 'hotspot') {
+      /*
+       * Hotspot držíme ako hviezdu:
+       * center v strede, leaves na kružnici okolo neho.
+       */
+      simulation
         .force(
-          'link',
-
+          'x',
           d3
-            .forceLink<
-              DetailNode,
-              DetailEdge
-            >(
-              edges
+            .forceX<DetailNode>(
+              node => node.targetX ?? centerX
             )
-
-            .id(
-              node =>
-                node.id
-            )
-
-            .distance(
-              240
-            )
-
-            .strength(
-              0.6
+            .strength(node =>
+              node.isCenter
+                ? 0.6
+                : 0.24
             )
         )
-
         .force(
-          'charge',
-
+          'y',
           d3
-            .forceManyBody()
-            .strength(
-              -900
+            .forceY<DetailNode>(
+              node => node.targetY ?? centerY
             )
-        )
-
+            .strength(node =>
+              node.isCenter
+                ? 0.6
+                : 0.24
+            )
+        );
+    }
+    else {
+      simulation
         .force(
           'center',
-
           d3.forceCenter(
             centerX,
             centerY
           )
         )
-
-        /*
-         * Jemné priťahovanie k stredu drží celý detailný graf
-         * v strede aj po tom, čo link/charge forces začnú pracovať.
-         */
         .force(
           'x',
-
           d3
-            .forceX<DetailNode>(
-              centerX
-            )
-            .strength(
-              0.035
-            )
+            .forceX<DetailNode>(centerX)
+            .strength(0.035)
         )
-
         .force(
           'y',
-
           d3
-            .forceY<DetailNode>(
-              centerY
-            )
-            .strength(
-              0.035
-            )
-        )
-
-        .force(
-          'collision',
-
-          d3
-            .forceCollide<
-              DetailNode
-            >()
-
-            .radius(
-              node => {
-
-                const halfWidth =
-                  this.DETAIL_NODE_WIDTH /
-                  2;
-
-
-                const halfHeight =
-                  node.boxHeight /
-                  2;
-
-
-                return (
-                  Math.sqrt(
-                    halfWidth *
-                    halfWidth +
-                    halfHeight *
-                    halfHeight
-                  ) +
-                  25
-                );
-
-              }
-            )
+            .forceY<DetailNode>(centerY)
+            .strength(0.035)
         );
+    }
+
+
+    this.detailSimulation = simulation;
 
 
     /* ====================================================================== */
     /* DRAG                                                                   */
     /* ====================================================================== */
 
-    const dragBehavior =
-      d3
-        .drag<
-          SVGGElement,
-          DetailNode
-        >()
-
-        .on(
-          'start',
-          (
-            event,
-            node
-          ) => {
-
-            if (
-              !event.active
-            ) {
-
-              this.detailSimulation
-                ?.alphaTarget(
-                  0.3
-                )
-                .restart();
-
-            }
+    const dragBehavior = d3
+      .drag<SVGGElement, DetailNode>()
+      .on('start', (event, node) => {
+        if (!event.active) {
+          this.detailSimulation
+            ?.alphaTarget(0.3)
+            .restart();
+        }
 
 
-            node.fx =
-              node.x;
+        node.fx = node.x;
+        node.fy = node.y;
+      })
+      .on('drag', (event, node) => {
+        node.fx = event.x;
+        node.fy = event.y;
+      })
+      .on('end', (event, node) => {
+        if (!event.active) {
+          this.detailSimulation
+            ?.alphaTarget(0);
+        }
 
 
-            node.fy =
-              node.y;
-
-          }
-        )
-
-        .on(
-          'drag',
-          (
-            event,
-            node
-          ) => {
-
-            node.fx =
-              event.x;
+        node.fx = null;
+        node.fy = null;
+      });
 
 
-            node.fy =
-              event.y;
-
-          }
-        )
-
-        .on(
-          'end',
-          (
-            event,
-            node
-          ) => {
-
-            if (
-              !event.active
-            ) {
-
-              this.detailSimulation
-                ?.alphaTarget(
-                  0
-                );
-
-            }
-
-
-            node.fx =
-              null;
-
-
-            node.fy =
-              null;
-
-          }
-        );
-
-
-    nodeGroups.call(
-      dragBehavior
-    );
+    nodeGroups.call(dragBehavior);
 
 
     /* ====================================================================== */
     /* TICK                                                                   */
     /* ====================================================================== */
 
-    this.detailSimulation.on(
-      'tick',
-      () => {
+    this.detailSimulation.on('tick', () => {
+      links
+        .attr('x1', edge =>
+          (edge.source as DetailNode).x ?? 0
+        )
+        .attr('y1', edge =>
+          (edge.source as DetailNode).y ?? 0
+        )
+        .attr('x2', edge =>
+          (edge.target as DetailNode).x ?? 0
+        )
+        .attr('y2', edge =>
+          (edge.target as DetailNode).y ?? 0
+        );
 
-        links
 
-          .attr(
-            'x1',
-            edge =>
-              (
-                edge.source as
-                DetailNode
-              ).x ?? 0
-          )
+      edgeLabels
+        .attr('x', edge => {
+          const source =
+            edge.source as DetailNode;
 
-          .attr(
-            'y1',
-            edge =>
-              (
-                edge.source as
-                DetailNode
-              ).y ?? 0
-          )
+          const target =
+            edge.target as DetailNode;
 
-          .attr(
-            'x2',
-            edge =>
-              (
-                edge.target as
-                DetailNode
-              ).x ?? 0
-          )
 
-          .attr(
-            'y2',
-            edge =>
-              (
-                edge.target as
-                DetailNode
-              ).y ?? 0
+          return (
+            ((source.x ?? 0) +
+            (target.x ?? 0)) /
+            2
           );
+        })
+        .attr('y', edge => {
+          const source =
+            edge.source as DetailNode;
+
+          const target =
+            edge.target as DetailNode;
 
 
-        edgeLabels
-
-          .attr(
-            'x',
-            edge => {
-
-              const source =
-                edge.source as
-                DetailNode;
-
-
-              const target =
-                edge.target as
-                DetailNode;
-
-
-              return (
-                (
-                  (
-                    source.x ??
-                    0
-                  ) +
-                  (
-                    target.x ??
-                    0
-                  )
-                ) /
-                2
-              );
-
-            }
-          )
-
-          .attr(
-            'y',
-            edge => {
-
-              const source =
-                edge.source as
-                DetailNode;
-
-
-              const target =
-                edge.target as
-                DetailNode;
-
-
-              return (
-                (
-                  (
-                    source.y ??
-                    0
-                  ) +
-                  (
-                    target.y ??
-                    0
-                  )
-                ) /
-                2
-              );
-
-            }
+          return (
+            ((source.y ?? 0) +
+            (target.y ?? 0)) /
+            2
           );
+        });
 
 
-        nodeGroups
-          .attr(
-            'transform',
-            node =>
-              `translate(
-                ${node.x ?? 0},
-                ${node.y ?? 0}
-              )`
-          );
-
-      }
-    );
+      nodeGroups.attr(
+        'transform',
+        node =>
+          `translate(${node.x ?? 0}, ${
+            node.y ?? 0
+          })`
+      );
+    });
 
 
     /* ====================================================================== */
-    /* FIXED HEADER                                                           */
+    /* DETAIL HEADER                                                          */
     /* ====================================================================== */
 
     this.drawDetailControls(
@@ -4076,7 +3019,6 @@ export class GraphsComponent
       structure,
       width
     );
-
   }
 
 
@@ -4085,318 +3027,244 @@ export class GraphsComponent
   /* ======================================================================== */
 
   private drawDetailControls(
-    svg:
-      d3.Selection<
-        SVGSVGElement,
-        unknown,
-        null,
-        undefined
-      >,
-
-    structure:
-      NPtychStructure,
-
-    width:
-      number
+    svg: d3.Selection<
+      SVGSVGElement,
+      unknown,
+      null,
+      undefined
+    >,
+    structure: AnalysisStructure,
+    width: number
   ): void {
 
-    const controls =
-      svg
-        .append(
-          'g'
-        )
-
-        .attr(
-          'class',
-          'detail-controls'
-        );
+    const controls = svg
+      .append('g')
+      .attr('class', 'detail-controls');
 
 
-    /* ====================================================================== */
-    /* BACK BUTTON                                                            */
-    /* ====================================================================== */
-
-    const backButton =
-      controls
-        .append(
-          'g'
-        )
-
-        .attr(
-          'transform',
-          'translate(24, 26)'
-        )
-
-        .style(
-          'cursor',
-          'pointer'
-        )
-
-        .on(
-          'click',
-          event => {
-
-            event.stopPropagation();
-
-
-            this.closeStructureDetail();
-
-          }
-        );
+    const backButton = controls
+      .append('g')
+      .attr(
+        'transform',
+        'translate(24, 26)'
+      )
+      .style('cursor', 'pointer')
+      .on('click', event => {
+        event.stopPropagation();
+        this.closeStructureDetail();
+      });
 
 
     backButton
-      .append(
-        'rect'
-      )
-
-      .attr(
-        'x',
-        0
-      )
-
-      .attr(
-        'y',
-        0
-      )
-
-      .attr(
-        'width',
-        118
-      )
-
-      .attr(
-        'height',
-        36
-      )
-
-      .attr(
-        'rx',
-        8
-      )
-
-      .attr(
-        'fill',
-        '#ffffff'
-      )
-
-      .attr(
-        'stroke',
-        '#d1d5db'
-      );
+      .append('rect')
+      .attr('x', 0)
+      .attr('y', 0)
+      .attr('width', 118)
+      .attr('height', 36)
+      .attr('rx', 8)
+      .attr('fill', '#ffffff')
+      .attr('stroke', '#d1d5db');
 
 
     backButton
-      .append(
-        'text'
-      )
-
-      .attr(
-        'x',
-        59
-      )
-
-      .attr(
-        'y',
-        23
-      )
-
-      .attr(
-        'text-anchor',
-        'middle'
-      )
-
+      .append('text')
+      .attr('x', 59)
+      .attr('y', 23)
+      .attr('text-anchor', 'middle')
       .attr(
         'font-family',
         'Roboto, Helvetica Neue, sans-serif'
       )
+      .attr('font-size', 12)
+      .attr('font-weight', 600)
+      .attr('fill', '#374151')
+      .text('← Hierarchia');
 
-      .attr(
-        'font-size',
-        12
-      )
-
-      .attr(
-        'font-weight',
-        600
-      )
-
-      .attr(
-        'fill',
-        '#374151'
-      )
-
-      .text(
-        '← Hierarchia'
-      );
-
-
-    /* ====================================================================== */
-    /* TITLE                                                                  */
-    /* ====================================================================== */
 
     controls
-      .append(
-        'text'
-      )
-
-      .attr(
-        'x',
-        width / 2
-      )
-
-      .attr(
-        'y',
-        38
-      )
-
-      .attr(
-        'text-anchor',
-        'middle'
-      )
-
+      .append('text')
+      .attr('x', width / 2)
+      .attr('y', 38)
+      .attr('text-anchor', 'middle')
       .attr(
         'font-family',
         'Roboto, Helvetica Neue, sans-serif'
       )
-
-      .attr(
-        'font-size',
-        20
-      )
-
-      .attr(
-        'font-weight',
-        700
-      )
-
-      .attr(
-        'fill',
-        '#111827'
-      )
-
+      .attr('font-size', 20)
+      .attr('font-weight', 700)
+      .attr('fill', '#111827')
       .text(
-        `K${structure.size}`
+        this.getStructureTitle(structure)
       );
 
 
     controls
-      .append(
-        'text'
-      )
-
-      .attr(
-        'x',
-        width / 2
-      )
-
-      .attr(
-        'y',
-        56
-      )
-
-      .attr(
-        'text-anchor',
-        'middle'
-      )
-
+      .append('text')
+      .attr('x', width / 2)
+      .attr('y', 56)
+      .attr('text-anchor', 'middle')
       .attr(
         'font-family',
         'Roboto, Helvetica Neue, sans-serif'
       )
-
-      .attr(
-        'font-size',
-        11
-      )
-
-      .attr(
-        'fill',
-        '#6b7280'
-      )
-
+      .attr('font-size', 11)
+      .attr('fill', '#6b7280')
       .text(
-        `${structure.size} vrcholov · ${structure.edges.length} hrán`
+        this.getStructureStats(
+          structure
+        )
       );
-
   }
 
 
   /* ======================================================================== */
-  /* ATTRIBUTE WORD WRAPPING                                                  */
+  /* FIT                                                                      */
   /* ======================================================================== */
 
-  /*
-   * Príklad:
-   *
-   * strong_negative_correlation
-   *
-   * ->
-   *
-   * strong_negative_
-   * correlation
-   *
-   *
-   * Ak neexistuje vhodný "_" alebo "-",
-   * rozsekne ho tvrdo po 15 znakoch.
-   */
-  private wrapAttributeLabel(
-    value:
-      string,
+  private fitHierarchyToView(
+    svg: d3.Selection<
+      SVGSVGElement,
+      unknown,
+      null,
+      undefined
+    >,
+    zoomBehavior: d3.ZoomBehavior<
+      SVGSVGElement,
+      unknown
+    >,
+    nodes: d3.HierarchyPointNode<
+      HierarchyViewNode
+    >[],
+    width: number,
+    height: number,
+    yOffset: number,
+    state: HierarchyDatasetState
+  ): void {
 
-    maxLength:
-      number
-  ): string[] {
-
-    if (
-      value.length <=
-      maxLength
-    ) {
-
-      return [
-        value
-      ];
-
+    if (nodes.length === 0) {
+      return;
     }
 
 
-    const lines:
-      string[] = [];
+    const xValues = nodes.map(node => node.x);
+    const yValues = nodes.map(
+      node => node.y - yOffset
+    );
 
 
-    let remaining =
-      value;
+    const minX =
+      Math.min(...xValues) -
+      this.CARD_WIDTH / 2;
 
 
-    while (
-      remaining.length >
-      maxLength
-    ) {
-
-      let splitIndex =
-        maxLength;
+    const maxX =
+      Math.max(...xValues) +
+      this.CARD_WIDTH / 2;
 
 
-      /*
-       * Skúsime nájsť prirodzené
-       * miesto na zalomenie.
-       */
+    const minY =
+      Math.min(...yValues) -
+      this.CARD_HEIGHT / 2;
+
+
+    const maxY =
+      Math.max(...yValues) +
+      this.CARD_HEIGHT / 2;
+
+
+    const hierarchyWidth = Math.max(
+      1,
+      maxX - minX
+    );
+
+
+    const hierarchyHeight = Math.max(
+      1,
+      maxY - minY
+    );
+
+
+    const padding = 100;
+
+
+    const scaleX =
+      (width - padding) /
+      hierarchyWidth;
+
+
+    const scaleY =
+      (height - padding) /
+      hierarchyHeight;
+
+
+    const scale = Math.max(
+      0.3,
+      Math.min(
+        1,
+        scaleX,
+        scaleY
+      )
+    );
+
+
+    const centerX =
+      (minX + maxX) / 2;
+
+
+    const centerY =
+      (minY + maxY) / 2;
+
+
+    const transform = d3.zoomIdentity
+      .translate(
+        width / 2,
+        height / 2
+      )
+      .scale(scale)
+      .translate(
+        -centerX,
+        -centerY
+      );
+
+
+    state.transform = transform;
+
+
+    svg.call(
+      zoomBehavior.transform,
+      transform
+    );
+  }
+
+
+  /* ======================================================================== */
+  /* LABEL WRAP                                                               */
+  /* ======================================================================== */
+
+  private wrapAttributeLabel(
+    value: string,
+    maxLength: number
+  ): string[] {
+
+    if (value.length <= maxLength) {
+      return [value];
+    }
+
+
+    const lines: string[] = [];
+    let remaining = value;
+
+
+    while (remaining.length > maxLength) {
+      let splitIndex = maxLength;
+
+
       for (
-        let index =
-          maxLength - 1;
-
-        index >=
-          Math.floor(
-            maxLength / 2
-          );
-
+        let index = maxLength - 1;
+        index >= Math.floor(maxLength / 2);
         index--
       ) {
-
-        const char =
-          remaining[
-            index
-          ];
+        const char = remaining[index];
 
 
         if (
@@ -4404,246 +3272,34 @@ export class GraphsComponent
           char === '-' ||
           char === ' '
         ) {
-
-          splitIndex =
-            index + 1;
-
-
+          splitIndex = index + 1;
           break;
-
         }
-
       }
 
 
-      const line =
-        remaining
-          .substring(
-            0,
-            splitIndex
-          )
-          .trim();
+      const line = remaining
+        .substring(0, splitIndex)
+        .trim();
 
 
-      if (
-        line.length > 0
-      ) {
-
-        lines.push(
-          line
-        );
-
+      if (line.length > 0) {
+        lines.push(line);
       }
 
 
-      remaining =
-        remaining
-          .substring(
-            splitIndex
-          )
-          .trim();
-
+      remaining = remaining
+        .substring(splitIndex)
+        .trim();
     }
 
 
-    if (
-      remaining.length > 0
-    ) {
-
-      lines.push(
-        remaining
-      );
-
+    if (remaining.length > 0) {
+      lines.push(remaining);
     }
 
 
     return lines;
-
-  }
-
-
-  /* ======================================================================== */
-  /* FIT HIERARCHY                                                            */
-  /* ======================================================================== */
-
-  private fitHierarchyToView(
-    svg:
-      d3.Selection<
-        SVGSVGElement,
-        unknown,
-        null,
-        undefined
-      >,
-
-    zoomBehavior:
-      d3.ZoomBehavior<
-        SVGSVGElement,
-        unknown
-      >,
-
-    nodes:
-      d3.HierarchyPointNode<
-        HierarchyViewNode
-      >[],
-
-    width:
-      number,
-
-    height:
-      number,
-
-    yOffset:
-      number
-  ): void {
-
-    if (
-      nodes.length === 0
-    ) {
-
-      return;
-
-    }
-
-
-    const xValues =
-      nodes.map(
-        node =>
-          node.x
-      );
-
-
-    const yValues =
-      nodes.map(
-        node =>
-          node.y -
-          yOffset
-      );
-
-
-    const minX =
-      Math.min(
-        ...xValues
-      ) -
-      this.CARD_WIDTH /
-      2;
-
-
-    const maxX =
-      Math.max(
-        ...xValues
-      ) +
-      this.CARD_WIDTH /
-      2;
-
-
-    const minY =
-      Math.min(
-        ...yValues
-      ) -
-      this.CARD_HEIGHT /
-      2;
-
-
-    const maxY =
-      Math.max(
-        ...yValues
-      ) +
-      this.CARD_HEIGHT /
-      2;
-
-
-    const hierarchyWidth =
-      Math.max(
-        1,
-        maxX -
-        minX
-      );
-
-
-    const hierarchyHeight =
-      Math.max(
-        1,
-        maxY -
-        minY
-      );
-
-
-    const padding =
-      100;
-
-
-    const scaleX =
-      (
-        width -
-        padding
-      ) /
-      hierarchyWidth;
-
-
-    const scaleY =
-      (
-        height -
-        padding
-      ) /
-      hierarchyHeight;
-
-
-    const scale =
-      Math.max(
-        0.3,
-
-        Math.min(
-          1,
-          scaleX,
-          scaleY
-        )
-      );
-
-
-    const centerX =
-      (
-        minX +
-        maxX
-      ) /
-      2;
-
-
-    const centerY =
-      (
-        minY +
-        maxY
-      ) /
-      2;
-
-
-    const transform =
-      d3
-        .zoomIdentity
-
-        .translate(
-          width / 2,
-          height / 2
-        )
-
-        .scale(
-          scale
-        )
-
-        .translate(
-          -centerX,
-          -centerY
-        );
-
-
-    this.hierarchyTransform =
-      transform;
-
-
-    svg.call(
-      zoomBehavior.transform,
-      transform
-    );
-
   }
 
 
@@ -4651,68 +3307,206 @@ export class GraphsComponent
   /* HELPERS                                                                  */
   /* ======================================================================== */
 
-  private createStructureKey(
-    members:
-      string[]
-  ): string {
+  private getActiveState(): HierarchyDatasetState {
+    if (this.graphType === 'paths') {
+      return this.pathState;
+    }
 
-    return (
-      [...members]
-        .sort()
-        .join(
-          '|'
-        )
-    );
 
+    if (this.graphType === 'hotspots') {
+      return this.hotspotState;
+    }
+
+
+    return this.nPtychState;
   }
 
 
-  private createRootPath(
-    structure:
-      NPtychStructure,
+  private getMinimumSize(
+    kind: StructureKind
+  ): number {
+    if (kind === 'path') {
+      return this.MIN_PATH_SIZE;
+    }
 
-    index:
-      number
+
+    if (kind === 'hotspot') {
+      return this.MIN_HOTSPOT_SIZE;
+    }
+
+
+    return this.MIN_NPTYCH_SIZE;
+  }
+
+
+  private getStructureTitle(
+    structure: AnalysisStructure
   ): string {
+    if (structure.kind === 'path') {
+      return `Cesta ${structure.size}`;
+    }
+
+
+    if (structure.kind === 'hotspot') {
+      return `Hotspot H${Math.max(0, structure.size - 1)}`;
+    }
+
+
+    return `K${structure.size}`;
+  }
+
+
+  private getStructureStats(
+    structure: AnalysisStructure
+  ): string {
+    if (structure.kind === 'hotspot') {
+      return (
+        `${Math.max(0, structure.size - 1)} listov · ` +
+        `${structure.edges.length} hrán`
+      );
+    }
+
 
     return (
-      `ROOT-${index}-${structure.key}`
+      `${structure.size} vrcholov · ` +
+      `${structure.edges.length} hrán`
+    );
+  }
+
+
+  private resolveHotspotCenter(
+    nodes: string[],
+    edges: NormalizedEdge[],
+    explicitCenter?: string
+  ): string | undefined {
+
+    if (
+      explicitCenter &&
+      nodes.includes(explicitCenter)
+    ) {
+      return explicitCenter;
+    }
+
+
+    const degree = new Map<string, number>();
+
+
+    nodes.forEach(node =>
+      degree.set(node, 0)
     );
 
+
+    edges.forEach(edge => {
+      if (degree.has(edge.source)) {
+        degree.set(
+          edge.source,
+          (degree.get(edge.source) ?? 0) + 1
+        );
+      }
+
+
+      if (degree.has(edge.target)) {
+        degree.set(
+          edge.target,
+          (degree.get(edge.target) ?? 0) + 1
+        );
+      }
+    });
+
+
+    let center: string | undefined;
+    let highestDegree = -1;
+
+
+    for (const node of nodes) {
+      const nodeDegree = degree.get(node) ?? 0;
+
+
+      if (nodeDegree > highestDegree) {
+        center = node;
+        highestDegree = nodeDegree;
+      }
+    }
+
+
+    return center;
+  }
+
+
+  private createHotspotKey(
+    center: string,
+    leaves: string[]
+  ): string {
+    return (
+      `${center}::` +
+      [...leaves]
+        .sort()
+        .join('|')
+    );
+  }
+
+
+  private createNPtychKey(
+    members: string[]
+  ): string {
+    return [...members]
+      .sort()
+      .join('|');
+  }
+
+
+  private canonicalizePath(
+    nodes: string[]
+  ): string[] {
+    const forward = [...nodes];
+    const reverse = [...nodes].reverse();
+
+
+    const forwardKey = forward.join('→');
+    const reverseKey = reverse.join('→');
+
+
+    return forwardKey.localeCompare(reverseKey) <= 0
+      ? forward
+      : reverse;
+  }
+
+
+  private createPathKey(
+    nodes: string[]
+  ): string {
+    return this.canonicalizePath(nodes)
+      .join('→');
+  }
+
+
+  private createRootViewPath(
+    structure: AnalysisStructure,
+    index: number
+  ): string {
+    return (
+      `ROOT-${structure.kind}-${index}-` +
+      structure.key
+    );
   }
 
 
   private isSubset(
-    smaller:
-      string[],
-
-    larger:
-      string[]
+    smaller: string[],
+    larger: string[]
   ): boolean {
 
-    if (
-      smaller.length >=
-      larger.length
-    ) {
-
+    if (smaller.length >= larger.length) {
       return false;
-
     }
 
 
-    const largerSet =
-      new Set(
-        larger
-      );
+    const largerSet = new Set(larger);
 
 
-    return smaller.every(
-      item =>
-        largerSet.has(
-          item
-        )
+    return smaller.every(member =>
+      largerSet.has(member)
     );
-
   }
 
 
@@ -4724,57 +3518,51 @@ export class GraphsComponent
       }
   ): string {
 
-    if (
-      typeof endpoint ===
-      'string'
-    ) {
-
+    if (typeof endpoint === 'string') {
       return endpoint;
-
     }
 
 
-    return (
-      endpoint.id ??
-      ''
-    );
-
+    return endpoint?.id ?? '';
   }
 
 
   private formatMemberList(
-    members:
-      string[]
+    members: string[],
+    kind: StructureKind
   ): string {
 
-    const text =
-      members.join(
-        ' · '
-      );
+    let value: string;
 
 
-    const maximum =
-      19;
+    if (kind === 'path') {
+      value = members.join(' → ');
+    }
+    else if (kind === 'hotspot') {
+      const [center, ...leaves] = members;
+
+      value = center
+        ? `${center} → ${leaves.join(', ')}`
+        : '';
+    }
+    else {
+      value = members.join(' · ');
+    }
+    const maximumLength = 24;
 
 
-    if (
-      text.length <=
-      maximum
-    ) {
-
-      return text;
-
+    if (value.length <= maximumLength) {
+      return value;
     }
 
 
     return (
-      text.substring(
+      value.substring(
         0,
-        maximum - 3
+        maximumLength - 3
       ) +
       '...'
     );
-
   }
 
 
@@ -4783,7 +3571,6 @@ export class GraphsComponent
   /* ======================================================================== */
 
   private clearSvg(): void {
-
     this.detailSimulation?.stop();
 
 
@@ -4793,62 +3580,9 @@ export class GraphsComponent
 
 
     d3
-      .select(
-        this.svgRef.nativeElement
-      )
-
+      .select(this.svgRef.nativeElement)
       .selectAll('*')
       .remove();
-
-  }
-
-
-  private clearCanvas(): void {
-
-    this.clearSvg();
-
-
-    this.allStructures = [];
-
-
-    this.structureMap.clear();
-
-
-    this.structuresBySize.clear();
-
-
-    this.childrenCache.clear();
-
-
-    this.rootStructures = [];
-
-
-    this.expandedPaths.clear();
-
-
-    this.selectedPathId =
-      null;
-
-
-    this.hierarchyAnchor =
-      null;
-
-
-    this.focusedStructure =
-      null;
-
-
-    this.viewMode =
-      'hierarchy';
-
-
-    this.hierarchyTransform =
-      d3.zoomIdentity;
-
-
-    this.detailTransform =
-      d3.zoomIdentity;
-
   }
 
 
@@ -4857,14 +3591,11 @@ export class GraphsComponent
   /* ======================================================================== */
 
   public resetView(): void {
-
     if (
       this.viewMode === 'detail' &&
       this.focusedStructure
     ) {
-
-      this.detailTransform =
-        d3.zoomIdentity;
+      this.detailTransform = d3.zoomIdentity;
 
 
       this.renderStructureDetail(
@@ -4872,26 +3603,17 @@ export class GraphsComponent
         true
       );
 
-
       return;
-
     }
 
 
-    this.hierarchyTransform =
-      d3.zoomIdentity;
+    const state = this.getActiveState();
+    state.transform = d3.zoomIdentity;
+    this.hierarchyAnchor = null;
 
 
-    if (
-      this.allStructures.length > 0
-    ) {
-
-      this.renderHierarchy(
-        true
-      );
-
+    if (state.allStructures.length > 0) {
+      this.renderHierarchy(true);
     }
-
   }
-
 }

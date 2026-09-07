@@ -10,17 +10,14 @@
 
   <div
   class="empty-graph"
-  *ngIf="
-    graphType === 'n-ptychs' &&
-    (!nPtychsData || nPtychsData.length === 0)
-  ">
+  *ngIf="!hasActiveData">
 
   <mat-icon>
     account_tree
   </mat-icon>
 
   <span>
-    Nahraj dataset pre zobrazenie N-ptychov
+    {{ emptyStateText }}
   </span>
 
 </div>
