@@ -1,0 +1,422 @@
+<div class="debug-dialog">
+
+  <!-- HEADER -->
+
+  <div class="debug-header">
+
+    <div class="debug-title">
+      <mat-icon>bug_report</mat-icon>
+
+      <div>
+        <h2>Python Debug</h2>
+        <span>Výstupy korelačného backendu</span>
+      </div>
+    </div>
+
+    <button
+      mat-icon-button
+      type="button"
+      matTooltip="Zavrieť"
+      (click)="close()">
+
+      <mat-icon>close</mat-icon>
+
+    </button>
+
+  </div>
+
+
+  <!-- CONTENT -->
+
+  <mat-dialog-content class="debug-content">
+
+    <mat-accordion multi>
+
+
+      <!-- ANALYSIS -->
+
+      <mat-expansion-panel
+        class="debug-panel"
+        [expanded]="true">
+
+        <mat-expansion-panel-header>
+
+          <mat-panel-title>
+
+            <div class="panel-title">
+
+              <mat-icon>analytics</mat-icon>
+
+              <span>Analýza datasetu</span>
+
+            </div>
+
+          </mat-panel-title>
+
+          <mat-panel-description>
+
+            <span
+              class="status"
+              [class.available]="data.analysis">
+
+              {{ data.analysis ? 'Načítané' : 'Bez dát' }}
+
+            </span>
+
+          </mat-panel-description>
+
+        </mat-expansion-panel-header>
+
+
+        <div
+          class="debug-section"
+          *ngIf="data.analysis; else noAnalysis">
+
+          <ul class="summary-list">
+
+            <li *ngIf="data.analysis.file">
+              <strong>Súbor:</strong>
+              {{ data.analysis.file }}
+            </li>
+
+            <li *ngIf="data.analysis.rows !== undefined">
+              <strong>Počet riadkov:</strong>
+              {{ data.analysis.rows }}
+            </li>
+
+            <li *ngIf="data.analysis.alpha !== undefined">
+              <strong>Alpha:</strong>
+              {{ data.analysis.alpha }}
+            </li>
+
+            <li *ngIf="data.analysis.threshold !== undefined">
+              <strong>Threshold:</strong>
+              {{ data.analysis.threshold }}
+            </li>
+
+            <li *ngIf="data.analysis.mean_D !== undefined">
+              <strong>Mean D:</strong>
+              {{ data.analysis.mean_D }}
+            </li>
+
+            <li *ngIf="data.analysis.max_D !== undefined">
+              <strong>Max D:</strong>
+              {{ data.analysis.max_D }}
+            </li>
+
+          </ul>
+
+          <div class="json-label">
+            Raw response
+          </div>
+
+          <pre class="json-output">{{ prettyJson(data.analysis) }}</pre>
+
+        </div>
+
+        <ng-template #noAnalysis>
+          <div class="empty-state">
+            Zatiaľ nebola vykonaná analýza datasetu.
+          </div>
+        </ng-template>
+
+      </mat-expansion-panel>
+
+
+      <!-- GRAPH -->
+
+      <mat-expansion-panel class="debug-panel">
+
+        <mat-expansion-panel-header>
+
+          <mat-panel-title>
+
+            <div class="panel-title">
+
+              <mat-icon>share</mat-icon>
+
+              <span>Graf</span>
+
+            </div>
+
+          </mat-panel-title>
+
+          <mat-panel-description>
+
+            <span
+              class="status"
+              [class.available]="data.graph">
+
+              {{ data.graph ? 'Načítané' : 'Bez dát' }}
+
+            </span>
+
+          </mat-panel-description>
+
+        </mat-expansion-panel-header>
+
+
+        <div
+          class="debug-section"
+          *ngIf="data.graph; else noGraph">
+
+          <ul class="summary-list">
+
+            <li *ngIf="data.graph.nodes">
+              <strong>Vrcholy:</strong>
+              {{ data.graph.nodes.length }}
+            </li>
+
+            <li *ngIf="data.graph.edges">
+              <strong>Hrany:</strong>
+              {{ data.graph.edges.length }}
+            </li>
+
+          </ul>
+
+          <div class="json-label">
+            Raw response
+          </div>
+
+          <pre class="json-output">{{ prettyJson(data.graph) }}</pre>
+
+        </div>
+
+        <ng-template #noGraph>
+          <div class="empty-state">
+            Graf ešte nebol načítaný.
+          </div>
+        </ng-template>
+
+      </mat-expansion-panel>
+
+
+      <!-- N-PTYCHS -->
+
+      <mat-expansion-panel class="debug-panel">
+
+        <mat-expansion-panel-header>
+
+          <mat-panel-title>
+
+            <div class="panel-title">
+
+              <mat-icon>account_tree</mat-icon>
+
+              <span>N-ptychy</span>
+
+            </div>
+
+          </mat-panel-title>
+
+          <mat-panel-description>
+
+            <span
+              class="result-count"
+              *ngIf="data.nPtychs">
+
+              {{ data.nPtychs.length }}
+
+            </span>
+
+            <span
+              class="status"
+              [class.available]="data.nPtychs">
+
+              {{ data.nPtychs ? 'výsledkov' : 'Bez dát' }}
+
+            </span>
+
+          </mat-panel-description>
+
+        </mat-expansion-panel-header>
+
+
+        <div
+          class="debug-section"
+          *ngIf="data.nPtychs; else noNPtychs">
+
+          <ul class="summary-list">
+            <li>
+              <strong>Počet nájdených:</strong>
+              {{ data.nPtychs.length }}
+            </li>
+          </ul>
+
+          <div class="json-label">
+            Raw response
+          </div>
+
+          <pre class="json-output">{{ prettyJson(data.nPtychs) }}</pre>
+
+        </div>
+
+        <ng-template #noNPtychs>
+          <div class="empty-state">
+            N-ptychy ešte neboli načítané.
+          </div>
+        </ng-template>
+
+      </mat-expansion-panel>
+
+
+      <!-- PATHS -->
+
+      <mat-expansion-panel class="debug-panel">
+
+        <mat-expansion-panel-header>
+
+          <mat-panel-title>
+
+            <div class="panel-title">
+
+              <mat-icon>route</mat-icon>
+
+              <span>Cesty</span>
+
+            </div>
+
+          </mat-panel-title>
+
+          <mat-panel-description>
+
+            <span
+              class="result-count"
+              *ngIf="data.paths">
+
+              {{ data.paths.length }}
+
+            </span>
+
+            <span
+              class="status"
+              [class.available]="data.paths">
+
+              {{ data.paths ? 'výsledkov' : 'Bez dát' }}
+
+            </span>
+
+          </mat-panel-description>
+
+        </mat-expansion-panel-header>
+
+
+        <div
+          class="debug-section"
+          *ngIf="data.paths; else noPaths">
+
+          <ul class="summary-list">
+            <li>
+              <strong>Počet nájdených ciest:</strong>
+              {{ data.paths.length }}
+            </li>
+          </ul>
+
+          <div class="json-label">
+            Raw response
+          </div>
+
+          <pre class="json-output">{{ prettyJson(data.paths) }}</pre>
+
+        </div>
+
+        <ng-template #noPaths>
+          <div class="empty-state">
+            Cesty ešte neboli načítané.
+          </div>
+        </ng-template>
+
+      </mat-expansion-panel>
+
+
+      <!-- HOTSPOTS -->
+
+      <mat-expansion-panel class="debug-panel">
+
+        <mat-expansion-panel-header>
+
+          <mat-panel-title>
+
+            <div class="panel-title">
+
+              <mat-icon>flare</mat-icon>
+
+              <span>Hotspoty</span>
+
+            </div>
+
+          </mat-panel-title>
+
+          <mat-panel-description>
+
+            <span
+              class="result-count"
+              *ngIf="data.hotspots">
+
+              {{ data.hotspots.length }}
+
+            </span>
+
+            <span
+              class="status"
+              [class.available]="data.hotspots">
+
+              {{ data.hotspots ? 'výsledkov' : 'Bez dát' }}
+
+            </span>
+
+          </mat-panel-description>
+
+        </mat-expansion-panel-header>
+
+
+        <div
+          class="debug-section"
+          *ngIf="data.hotspots; else noHotspots">
+
+          <ul class="summary-list">
+            <li>
+              <strong>Počet nájdených hotspotov:</strong>
+              {{ data.hotspots.length }}
+            </li>
+          </ul>
+
+          <div class="json-label">
+            Raw response
+          </div>
+
+          <pre class="json-output">{{ prettyJson(data.hotspots) }}</pre>
+
+        </div>
+
+        <ng-template #noHotspots>
+          <div class="empty-state">
+            Hotspoty ešte neboli načítané.
+          </div>
+        </ng-template>
+
+      </mat-expansion-panel>
+
+
+    </mat-accordion>
+
+  </mat-dialog-content>
+
+
+  <!-- FOOTER -->
+
+  <mat-dialog-actions class="debug-actions">
+
+    <button
+      mat-flat-button
+      color="primary"
+      type="button"
+      (click)="close()">
+
+      Zavrieť
+
+    </button>
+
+  </mat-dialog-actions>
+
+</div>

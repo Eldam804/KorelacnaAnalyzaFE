@@ -1,0 +1,36 @@
+<div
+  #graphContainer
+  class="graph-container">
+
+  <svg
+    #svg
+    class="graph-svg">
+  </svg>
+
+
+  <div
+    class="empty-graph"
+    *ngIf="graphType === 'graph' && !graphData">
+
+    <mat-icon>hub</mat-icon>
+
+    <span>
+      Nahraj dataset pre zobrazenie grafu
+    </span>
+
+  </div>
+
+
+  <div
+    class="empty-graph"
+    *ngIf="graphType !== 'graph'">
+
+    <mat-icon>construction</mat-icon>
+
+    <span>
+      Táto vizualizácia bude doplnená neskôr
+    </span>
+
+  </div>
+
+</div>

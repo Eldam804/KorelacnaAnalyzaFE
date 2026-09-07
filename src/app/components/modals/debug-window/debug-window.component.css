@@ -1,0 +1,279 @@
+:host {
+  display: block;
+
+  width: 100%;
+
+  box-sizing: border-box;
+}
+
+
+.debug-dialog {
+  width: 100%;
+
+  display: flex;
+  flex-direction: column;
+
+  box-sizing: border-box;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* HEADER                                                                     */
+/* -------------------------------------------------------------------------- */
+
+.debug-header {
+  display: flex;
+  align-items: center;
+
+  width: 100%;
+
+  padding: 18px 24px;
+
+  border-bottom: 1px solid #e5e7eb;
+
+  box-sizing: border-box;
+}
+
+
+.debug-title {
+  flex: 1;
+
+  display: flex;
+  align-items: center;
+
+  gap: 12px;
+}
+
+
+.debug-title > mat-icon {
+  color: #3f51b5;
+
+  width: 30px;
+  height: 30px;
+
+  font-size: 30px;
+}
+
+
+.debug-title h2 {
+  margin: 0;
+
+  font-size: 20px;
+  font-weight: 600;
+
+  color: #111827;
+}
+
+
+.debug-title span {
+  display: block;
+
+  margin-top: 2px;
+
+  font-size: 12px;
+
+  color: #6b7280;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* CONTENT                                                                    */
+/* -------------------------------------------------------------------------- */
+
+.debug-content {
+  width: 100%;
+
+  padding: 20px 24px !important;
+
+  box-sizing: border-box;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* PANELS                                                                     */
+/* -------------------------------------------------------------------------- */
+
+.debug-panel {
+  margin-bottom: 10px;
+
+  border: 1px solid #e5e7eb;
+
+  box-shadow: none !important;
+}
+
+
+.panel-title {
+  display: flex;
+  align-items: center;
+
+  gap: 10px;
+
+  font-weight: 500;
+}
+
+
+.panel-title mat-icon {
+  color: #3f51b5;
+}
+
+
+mat-panel-description {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+
+  gap: 6px;
+}
+
+
+.status {
+  font-size: 12px;
+
+  color: #9ca3af;
+}
+
+
+.status.available {
+  color: #4b5563;
+}
+
+
+.result-count {
+  min-width: 24px;
+
+  padding: 2px 7px;
+
+  border-radius: 12px;
+
+  text-align: center;
+
+  font-size: 11px;
+  font-weight: 600;
+
+  background: rgba(63, 81, 181, 0.1);
+
+  color: #3f51b5;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* SECTION                                                                    */
+/* -------------------------------------------------------------------------- */
+
+.debug-section {
+  padding: 4px 0 10px 0;
+}
+
+
+.summary-list {
+  margin: 4px 0 18px 0;
+
+  padding-left: 22px;
+
+  color: #4b5563;
+}
+
+
+.summary-list li {
+  margin-bottom: 7px;
+
+  line-height: 1.4;
+}
+
+
+.summary-list strong {
+  color: #111827;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* JSON                                                                       */
+/* -------------------------------------------------------------------------- */
+
+.json-label {
+  margin-bottom: 6px;
+
+  font-size: 11px;
+  font-weight: 600;
+
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+
+  color: #6b7280;
+}
+
+
+.json-output {
+  max-height: 360px;
+
+  margin: 0;
+
+  padding: 14px 16px;
+
+  overflow: auto;
+
+  border: 1px solid #dfe3ea;
+  border-radius: 8px;
+
+  background: #f6f7f9;
+
+  font-family:
+    "JetBrains Mono",
+    "Cascadia Code",
+    Consolas,
+    monospace;
+
+  font-size: 12px;
+  line-height: 1.5;
+
+  color: #1f2937;
+
+  white-space: pre;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* EMPTY                                                                      */
+/* -------------------------------------------------------------------------- */
+
+.empty-state {
+  padding: 18px;
+
+  border: 1px dashed #d1d5db;
+  border-radius: 8px;
+
+  text-align: center;
+
+  font-size: 13px;
+
+  color: #9ca3af;
+
+  background: #fafafa;
+}
+
+
+/* -------------------------------------------------------------------------- */
+/* FOOTER                                                                     */
+/* -------------------------------------------------------------------------- */
+
+.debug-actions {
+  width: 100%;
+
+  display: flex !important;
+  justify-content: flex-end !important;
+
+  margin: 0 !important;
+
+  padding: 14px 24px 18px 24px !important;
+
+  border-top: 1px solid #e5e7eb;
+
+  box-sizing: border-box;
+}
+
+
+.debug-actions button {
+  min-width: 100px;
+
+  border-radius: 8px;
+}

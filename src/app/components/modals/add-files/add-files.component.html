@@ -1,0 +1,136 @@
+<h2 mat-dialog-title class="dialog-title">
+  <mat-icon>upload_file</mat-icon>
+  Načítať dataset
+</h2>
+
+<mat-dialog-content>
+
+  <p class="description">
+    Vyber CSV súbor obsahujúci atribúty pre korelačnú analýzu.
+    Nenumerické atribúty backend automaticky ignoruje.
+  </p>
+
+
+  <input
+    #fileInput
+    type="file"
+    accept=".csv,text/csv"
+    hidden
+    (change)="onFileSelected($event)"
+  >
+
+
+  <div
+    class="upload-area"
+    *ngIf="!selectedFile"
+    (click)="fileInput.click()">
+
+    <mat-icon class="upload-icon">
+      cloud_upload
+    </mat-icon>
+
+    <div class="upload-title">
+      Vybrať CSV súbor
+    </div>
+
+    <div class="upload-description">
+      Kliknutím vyber súbor z počítača
+    </div>
+
+  </div>
+
+
+  <div
+    class="selected-file"
+    *ngIf="selectedFile">
+
+    <div class="file-icon">
+      <mat-icon>description</mat-icon>
+    </div>
+
+    <div class="file-information">
+
+      <span class="file-name">
+        {{ selectedFile.name }}
+      </span>
+
+      <span class="file-size">
+        {{ (selectedFile.size / 1024).toFixed(1) }} KB
+      </span>
+
+    </div>
+
+    <button
+      mat-icon-button
+      type="button"
+      matTooltip="Odstrániť súbor"
+      (click)="removeFile()">
+
+      <mat-icon>close</mat-icon>
+
+    </button>
+
+  </div>
+
+
+  <mat-form-field
+    appearance="outline"
+    class="alpha-field">
+
+    <mat-label>Alpha</mat-label>
+
+    <input
+      matInput
+      type="number"
+      min="0"
+      max="1"
+      step="0.01"
+      [(ngModel)]="alpha"
+    >
+
+    <mat-hint>
+      Hodnota od 0 do 1
+    </mat-hint>
+
+  </mat-form-field>
+
+
+  <div
+    class="error-message"
+    *ngIf="errorMessage">
+
+    <mat-icon>error_outline</mat-icon>
+
+    {{ errorMessage }}
+
+  </div>
+
+</mat-dialog-content>
+
+
+<mat-dialog-actions class="dialog-actions">
+
+  <div class="action-buttons">
+
+    <button
+      mat-button
+      type="button"
+      (click)="cancel()">
+      Zrušiť
+    </button>
+
+    <button
+      mat-flat-button
+      color="primary"
+      type="button"
+      [disabled]="!selectedFile"
+      (click)="submit()">
+
+      <mat-icon>analytics</mat-icon>
+      Analyzovať
+
+    </button>
+
+  </div>
+
+</mat-dialog-actions>
