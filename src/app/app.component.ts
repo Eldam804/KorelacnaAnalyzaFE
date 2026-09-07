@@ -13,7 +13,10 @@ import {
   DebugWindowData
 } from './components/modals/debug-window/debug-window.component';
 
-export type GraphType = 'graph' | 'n-ptychs' | 'paths' | 'hotspots';
+export type GraphType =
+  | 'n-ptychs'
+  | 'paths'
+  | 'hotspots';
 
 @Component({
   selector: 'app-root',
@@ -22,9 +25,11 @@ export type GraphType = 'graph' | 'n-ptychs' | 'paths' | 'hotspots';
 })
 export class AppComponent {
 
-  selectedGraphType: GraphType = 'graph';
+  selectedGraphType: GraphType = 'n-ptychs';
   analysisResult: any | null = null;
   graphData: any | null = null;
+  visualizationGraphData: any | null = null;
+  largestNPtych: any | null = null;
   loadedFileName: string | null = null;
   currentAlpha: number | null = null;
   nPtychsData: any[] | null = null;
@@ -41,9 +46,47 @@ export class AppComponent {
 
 
   selectGraphType(type: GraphType): void {
-    this.selectedGraphType = type;
-  }
 
+  this.selectedGraphType = type;
+
+  if (type === 'n-ptychs') {
+    this.visualizationGraphData =
+      this.largestNPtych
+        ? this.convertNPtychToGraph(this.largestNPtych)
+        : null;
+
+    return;
+  }
+  
+
+  /*
+   * Paths a hotspots zatiaľ nemáme vizualizované.
+   */
+  this.visualizationGraphData = null;
+}
+
+  private convertNPtychToGraph(
+    nPtych: any
+  ): any {
+
+    return {
+
+      nodes: nPtych.nodes.map(
+        (node: string) => ({
+          id: node
+        })
+      ),
+
+      edges: nPtych.edges.map(
+        (edge: any) => ({
+          source: edge.source,
+          target: edge.target,
+          correlation: edge.correlation
+        })
+      )
+
+    };
+  }
 
   openAddFiles(): void {
 
@@ -109,44 +152,135 @@ export class AppComponent {
   // -------------------------------------------------------------------------
 
   analyzeCsv(file: File, alpha: number): void {
-  this.isLoading = true;
+
+    this.isLoading = true;
+
+    this.pythonConnector
+      .analyze(file, alpha)
+      .pipe(
+        finalize(() => {
+          this.isLoading = false;
+        })
+      )
+      .subscribe({
+
+        next: response => {
+
+          console.log('ANALYZE:', response);
+
+          this.analysisResult = response;
+          this.graphData = response.graph;
+          this.loadedFileName = response.file;
+          this.currentAlpha = response.alpha;
+          this.selectedGraphType = 'n-ptychs';
+
+          this.loadLargestNPtych(response.graph);
+
+          this.snackBar.open(
+            `Dataset "${response.file}" bol analyzovaný.`,
+            'OK',
+            {
+              duration: 3000
+            }
+          );
+        },
+
+        error: error => {
+
+          console.error('ANALYZE ERROR:', error);
+
+          this.snackBar.open(
+            error?.error?.detail ??
+            'Chyba pri analýze CSV.',
+            'OK',
+            {
+              duration: 5000
+            }
+          );
+        }
+
+      });
+  }
+  private loadLargestNPtych(graph: any): void {
+
+    this.largestNPtych = null;
+    this.nPtychsData = null;
+    this.visualizationGraphData = null;
+
+    const connectedNodes = new Set<string>();
+
+    for (const edge of graph.edges ?? []) {
+      connectedNodes.add(edge.source);
+      connectedNodes.add(edge.target);
+    }
+    const maximumPossibleN = connectedNodes.size;
+
+  if (maximumPossibleN < 2) {
+    return;
+  }
+    this.findNPtychFromSize(
+      maximumPossibleN
+    );
+  }
+  private findNPtychFromSize(n: number): void {
+
+  if (n < 2) {
+
+    console.log(
+      'No n-ptych found.'
+    );
+
+    return;
+  }
 
   this.pythonConnector
-    .analyze(file, alpha)
-    .pipe(
-      finalize(() => {
-        this.isLoading = false;
-      })
-    )
+    .getNPtychs(n, n)
     .subscribe({
+
       next: response => {
-        console.log('ANALYZE:', response);
 
-        this.analysisResult = response;
-        this.graphData = response.graph;
-        this.loadedFileName = response.file;
-        this.currentAlpha = response.alpha;
+        console.log(
+          `K${n} result:`,
+          response
+        );
 
-        this.snackBar.open(
-          `Dataset "${response.file}" bol analyzovaný.`,
-          'OK',
-          {
-            duration: 3000
-          }
+
+        if (response.length === 0) {
+          this.findNPtychFromSize(
+            n - 1
+          );
+
+          return;
+        }
+        this.nPtychsData = response;
+        this.largestNPtych = response[0];
+
+
+        this.visualizationGraphData =
+          this.convertNPtychToGraph(
+            this.largestNPtych
+          );
+
+
+        console.log(
+          `Largest n-ptych found: K${n}`
+        );
+
+        console.log(
+          'Displayed n-ptych:',
+          this.largestNPtych
         );
       },
 
       error: error => {
-        console.error('ANALYZE ERROR:', error);
 
-        this.snackBar.open(
-          error?.error?.detail ?? 'Chyba pri analýze CSV.',
-          'OK',
-          {
-            duration: 5000
-          }
+        console.error(
+          `Error loading K${n}:`,
+          error
         );
+
       }
+
     });
 }
 

@@ -13,7 +13,6 @@ import * as d3 from 'd3';
 
 
 export type GraphType =
-  | 'graph'
   | 'n-ptychs'
   | 'paths'
   | 'hotspots';
@@ -60,7 +59,7 @@ export class GraphsComponent
 
 
   @Input()
-  graphType: GraphType = 'graph';
+  graphType: GraphType = 'n-ptychs';
 
 
   @Input()
@@ -76,57 +75,55 @@ export class GraphsComponent
 
   ngAfterViewInit(): void {
 
-    this.viewInitialized = true;
+  this.viewInitialized = true;
 
-    this.resizeObserver = new ResizeObserver(() => {
+  this.resizeObserver = new ResizeObserver(() => {
 
-      if (
-        this.graphType === 'graph' &&
-        this.graphData
-      ) {
-        this.renderGraph();
-      }
-
-    });
-
-    this.resizeObserver.observe(
-      this.graphContainerRef.nativeElement
-    );
-
-
-    if (
-      this.graphType === 'graph' &&
-      this.graphData
-    ) {
+    if (this.graphData) {
       this.renderGraph();
     }
+
+  });
+
+
+  this.resizeObserver.observe(
+    this.graphContainerRef.nativeElement
+  );
+
+
+  if (this.graphData) {
+    this.renderGraph();
+  }
+}
+
+
+  ngOnChanges(
+  changes: SimpleChanges
+): void {
+
+  if (!this.viewInitialized) {
+    return;
   }
 
 
-  ngOnChanges(changes: SimpleChanges): void {
+  if (
+    changes['graphData'] ||
+    changes['graphType']
+  ) {
 
-    if (!this.viewInitialized) {
-      return;
-    }
+    if (this.graphData) {
 
-
-    if (
-      changes['graphData'] ||
-      changes['graphType']
-    ) {
-
-      if (
-        this.graphType === 'graph' &&
-        this.graphData
-      ) {
-        this.renderGraph();
-      }
-      else {
-        this.clearGraph();
-      }
+      this.renderGraph();
 
     }
+    else {
+
+      this.clearGraph();
+
+    }
+
   }
+}
 
 
   ngOnDestroy(): void {

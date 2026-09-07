@@ -9,28 +9,15 @@
 
 
   <div
-    class="empty-graph"
-    *ngIf="graphType === 'graph' && !graphData">
+  class="empty-graph"
+  *ngIf="!graphData">
 
-    <mat-icon>hub</mat-icon>
+  <mat-icon>account_tree</mat-icon>
 
-    <span>
-      Nahraj dataset pre zobrazenie grafu
-    </span>
+  <span>
+    Nie sú dostupné dáta pre túto vizualizáciu
+  </span>
 
-  </div>
-
-
-  <div
-    class="empty-graph"
-    *ngIf="graphType !== 'graph'">
-
-    <mat-icon>construction</mat-icon>
-
-    <span>
-      Táto vizualizácia bude doplnená neskôr
-    </span>
-
-  </div>
+</div>
 
 </div>
