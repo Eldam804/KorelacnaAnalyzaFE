@@ -10,12 +10,17 @@
 
   <div
   class="empty-graph"
-  *ngIf="!graphData">
+  *ngIf="
+    graphType === 'n-ptychs' &&
+    (!nPtychsData || nPtychsData.length === 0)
+  ">
 
-  <mat-icon>account_tree</mat-icon>
+  <mat-icon>
+    account_tree
+  </mat-icon>
 
   <span>
-    Nie sú dostupné dáta pre túto vizualizáciu
+    Nahraj dataset pre zobrazenie N-ptychov
   </span>
 
 </div>

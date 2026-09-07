@@ -1,22 +1,35 @@
 import { Component } from '@angular/core';
+
 import { PythonConnectorService } from './backend/python-connector.service';
+
 import { MatDialog } from '@angular/material/dialog';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { finalize } from 'rxjs';
+
+import {
+  catchError,
+  finalize,
+  forkJoin,
+  of,
+  switchMap,
+  tap
+} from 'rxjs';
 
 import {
   AddFilesComponent,
   AddFilesDialogResult
 } from './components/modals/add-files/add-files.component';
+
 import {
   DebugWindowComponent,
   DebugWindowData
 } from './components/modals/debug-window/debug-window.component';
 
+
 export type GraphType =
   | 'n-ptychs'
   | 'paths'
   | 'hotspots';
+
 
 @Component({
   selector: 'app-root',
@@ -25,16 +38,74 @@ export type GraphType =
 })
 export class AppComponent {
 
+
+  // -------------------------------------------------------------------------
+  // VIEW
+  // -------------------------------------------------------------------------
+
   selectedGraphType: GraphType = 'n-ptychs';
+
+
+  // -------------------------------------------------------------------------
+  // ANALYSIS DATA
+  // -------------------------------------------------------------------------
+
+  /*
+   * Kompletný response z /analyze.
+   */
   analysisResult: any | null = null;
+
+
+  /*
+   * Celý prefiltrovaný korelačný graf.
+   *
+   * Viewer ho momentálne priamo nezobrazuje,
+   * ale potrebujeme ho pre debug a ďalšie analýzy.
+   */
   graphData: any | null = null;
-  visualizationGraphData: any | null = null;
-  largestNPtych: any | null = null;
-  loadedFileName: string | null = null;
-  currentAlpha: number | null = null;
+
+
+  /*
+   * VŠETKY N-ptychy.
+   */
   nPtychsData: any[] | null = null;
+
+
+  /*
+   * VŠETKY cesty.
+   */
   pathsData: any[] | null = null;
+
+
+  /*
+   * VŠETKY hotspoty.
+   */
   hotspotsData: any[] | null = null;
+
+
+  // -------------------------------------------------------------------------
+  // DATASET INFO
+  // -------------------------------------------------------------------------
+
+  loadedFileName: string | null = null;
+
+  currentAlpha: number | null = null;
+
+
+  // -------------------------------------------------------------------------
+  // LOADING
+  // -------------------------------------------------------------------------
+
+  /*
+   * Toto teraz pokrýva:
+   *
+   * 1. CSV analýzu
+   * 2. výpočet N-ptychov
+   * 3. výpočet ciest
+   * 4. výpočet hotspotov
+   *
+   * Čiže loading skončí až keď máme všetko.
+   */
   isLoading = false;
 
 
@@ -45,257 +116,512 @@ export class AppComponent {
   ) {}
 
 
-  selectGraphType(type: GraphType): void {
+  // =========================================================================
+  // NAVIGATION
+  // =========================================================================
 
-  this.selectedGraphType = type;
+  selectGraphType(
+    type: GraphType
+  ): void {
 
-  if (type === 'n-ptychs') {
-    this.visualizationGraphData =
-      this.largestNPtych
-        ? this.convertNPtychToGraph(this.largestNPtych)
-        : null;
+    this.selectedGraphType = type;
 
-    return;
   }
-  
 
-  /*
-   * Paths a hotspots zatiaľ nemáme vizualizované.
-   */
-  this.visualizationGraphData = null;
-}
 
-  private convertNPtychToGraph(
-    nPtych: any
-  ): any {
-
-    return {
-
-      nodes: nPtych.nodes.map(
-        (node: string) => ({
-          id: node
-        })
-      ),
-
-      edges: nPtych.edges.map(
-        (edge: any) => ({
-          source: edge.source,
-          target: edge.target,
-          correlation: edge.correlation
-        })
-      )
-
-    };
-  }
+  // =========================================================================
+  // ADD FILE MODAL
+  // =========================================================================
 
   openAddFiles(): void {
 
-  const dialogRef = this.dialog.open(AddFilesComponent, {
-    width: '460px',
-    maxWidth: '92vw',
-    disableClose: true
-  });
-
-
-  dialogRef
-    .afterClosed()
-    .subscribe((result: AddFilesDialogResult | undefined) => {
-
-      if (!result) {
-        return;
-      }
-
-      this.analyzeCsv(
-        result.file,
-        result.alpha
+    const dialogRef =
+      this.dialog.open(
+        AddFilesComponent,
+        {
+          width: '460px',
+          maxWidth: '92vw',
+          disableClose: true
+        }
       );
 
-    });
 
-}
+    dialogRef
+      .afterClosed()
+      .subscribe(
+        (
+          result:
+            AddFilesDialogResult |
+            undefined
+        ) => {
 
+          if (!result) {
+            return;
+          }
+
+
+          this.analyzeCsv(
+            result.file,
+            result.alpha
+          );
+
+        }
+      );
+
+  }
+
+
+  // =========================================================================
+  // DEBUG MODAL
+  // =========================================================================
 
   openDebugWindow(): void {
 
-  const debugData: DebugWindowData = {
+    const debugData:
+      DebugWindowData = {
 
-    analysis: this.analysisResult,
+      analysis:
+        this.analysisResult,
 
-    graph: this.graphData,
+      graph:
+        this.graphData,
 
-    nPtychs: this.nPtychsData,
+      nPtychs:
+        this.nPtychsData,
 
-    paths: this.pathsData,
+      paths:
+        this.pathsData,
 
-    hotspots: this.hotspotsData
+      hotspots:
+        this.hotspotsData
 
-  };
-
-
-  this.dialog.open(DebugWindowComponent, {
-
-    width: '900px',
-
-    maxWidth: '92vw',
-
-    maxHeight: '88vh',
-
-    data: debugData
-
-  });
-
-}
+    };
 
 
-  // -------------------------------------------------------------------------
-  // BACKEND CALLS
-  // -------------------------------------------------------------------------
+    this.dialog.open(
+      DebugWindowComponent,
+      {
+        width: '900px',
+        maxWidth: '92vw',
+        maxHeight: '88vh',
+        data: debugData
+      }
+    );
 
-  analyzeCsv(file: File, alpha: number): void {
+  }
+
+
+  // =========================================================================
+  // COMPLETE ANALYSIS
+  // =========================================================================
+
+  analyzeCsv(
+    file: File,
+    alpha: number
+  ): void {
+
+
+    // -----------------------------------------------------------------------
+    // RESET
+    // -----------------------------------------------------------------------
 
     this.isLoading = true;
 
+    this.analysisResult = null;
+
+    this.graphData = null;
+
+    this.nPtychsData = null;
+
+    this.pathsData = null;
+
+    this.hotspotsData = null;
+
+    this.loadedFileName = null;
+
+    this.currentAlpha = null;
+
+
+    /*
+     * Po každom novom datasete začíname
+     * v N-ptych hierarchy view.
+     */
+    this.selectedGraphType =
+      'n-ptychs';
+
+
+    // -----------------------------------------------------------------------
+    // ANALYZE
+    // -----------------------------------------------------------------------
+
     this.pythonConnector
-      .analyze(file, alpha)
-      .pipe(
-        finalize(() => {
-          this.isLoading = false;
-        })
+      .analyze(
+        file,
+        alpha
       )
+
+      .pipe(
+
+
+        // -------------------------------------------------------------------
+        // SAVE ANALYSIS RESULT
+        // -------------------------------------------------------------------
+
+        tap(
+          response => {
+
+            console.log(
+              'ANALYZE:',
+              response
+            );
+
+
+            this.analysisResult =
+              response;
+
+
+            this.graphData =
+              response.graph;
+
+
+            this.loadedFileName =
+              response.file;
+
+
+            this.currentAlpha =
+              response.alpha;
+
+          }
+        ),
+
+
+        // -------------------------------------------------------------------
+        // AFTER ANALYSIS -> LOAD ALL STRUCTURES
+        // -------------------------------------------------------------------
+
+        switchMap(
+          response => {
+
+            const graph =
+              response.graph;
+
+
+            /*
+             * Maximálna možná veľkosť N-ptychu.
+             *
+             * Izolované nodes ignorujeme,
+             * pretože nemôžu byť ani K2.
+             */
+            const maximumNPtychSize =
+              this.getMaximumNPtychSize(
+                graph
+              );
+
+
+            console.log(
+              'Maximum possible N-ptych size:',
+              maximumNPtychSize
+            );
+
+
+            /*
+             * Ak graf nemá ani jednu hranu,
+             * N-ptychy nemajú zmysel volať.
+             */
+            const nPtychsRequest =
+
+              maximumNPtychSize >= 2
+
+                ? this.pythonConnector
+                    .getNPtychs(
+                      2,
+                      maximumNPtychSize
+                    )
+
+                : of<any[]>([]);
+
+
+            /*
+             * Všetky tri analytické časti
+             * spustíme PARALELNE.
+             *
+             * Python teda počíta:
+             *
+             * N-ptychy
+             * Cesty
+             * Hotspoty
+             *
+             * a Angular čaká, kým všetko skončí.
+             */
+            return forkJoin({
+
+
+              // -------------------------------------------------------------
+              // N-PTYCHS
+              // -------------------------------------------------------------
+
+              nPtychs:
+                nPtychsRequest.pipe(
+
+                  catchError(
+                    error => {
+
+                      console.error(
+                        'N-PTYCH ERROR:',
+                        error
+                      );
+
+
+                      return of<any[]>(
+                        []
+                      );
+
+                    }
+                  )
+
+                ),
+
+
+              // -------------------------------------------------------------
+              // PATHS
+              // -------------------------------------------------------------
+
+              paths:
+                this.pythonConnector
+                  .getPaths(
+                    2
+                  )
+                  .pipe(
+
+                    catchError(
+                      error => {
+
+                        console.error(
+                          'PATH ERROR:',
+                          error
+                        );
+
+
+                        return of<any[]>(
+                          []
+                        );
+
+                      }
+                    )
+
+                  ),
+
+
+              // -------------------------------------------------------------
+              // HOTSPOTS
+              // -------------------------------------------------------------
+
+              hotspots:
+                this.pythonConnector
+                  .getHotspots(
+                    2
+                  )
+                  .pipe(
+
+                    catchError(
+                      error => {
+
+                        console.error(
+                          'HOTSPOT ERROR:',
+                          error
+                        );
+
+
+                        return of<any[]>(
+                          []
+                        );
+
+                      }
+                    )
+
+                  )
+
+            });
+
+          }
+        ),
+
+
+        // -------------------------------------------------------------------
+        // LOADING FINISH
+        // -------------------------------------------------------------------
+
+        finalize(
+          () => {
+
+            this.isLoading =
+              false;
+
+          }
+        )
+
+      )
+
+
       .subscribe({
 
-        next: response => {
+        next: result => {
 
-          console.log('ANALYZE:', response);
+          this.nPtychsData =
+            result.nPtychs;
 
-          this.analysisResult = response;
-          this.graphData = response.graph;
-          this.loadedFileName = response.file;
-          this.currentAlpha = response.alpha;
-          this.selectedGraphType = 'n-ptychs';
 
-          this.loadLargestNPtych(response.graph);
+          this.pathsData =
+            result.paths;
+
+
+          this.hotspotsData =
+            result.hotspots;
+
+          console.log(
+            '======================================'
+          );
+
+          console.log(
+            'COMPLETE ANALYSIS FINISHED'
+          );
+
+          console.log(
+            'N-PTYCHS:',
+            this.nPtychsData
+          );
+
+          console.log(
+            'PATHS:',
+            this.pathsData
+          );
+
+          console.log(
+            'HOTSPOTS:',
+            this.hotspotsData
+          );
+
+          console.log(
+            '======================================'
+          );
+
+
+          console.log(
+            'N-PTYCH COUNT:',
+            this.nPtychsData.length
+          );
+
+          console.log(
+            'PATH COUNT:',
+            this.pathsData.length
+          );
+
+          console.log(
+            'HOTSPOT COUNT:',
+            this.hotspotsData.length
+          );
 
           this.snackBar.open(
-            `Dataset "${response.file}" bol analyzovaný.`,
+
+            `Dataset "${this.loadedFileName}" bol analyzovaný.`,
+
             'OK',
+
             {
               duration: 3000
             }
+
           );
+
         },
 
         error: error => {
 
-          console.error('ANALYZE ERROR:', error);
+          console.error(
+            'ANALYZE ERROR:',
+            error
+          );
+
 
           this.snackBar.open(
+
             error?.error?.detail ??
             'Chyba pri analýze CSV.',
+
             'OK',
+
             {
               duration: 5000
             }
+
           );
+
         }
 
       });
+
   }
-  private loadLargestNPtych(graph: any): void {
 
-    this.largestNPtych = null;
-    this.nPtychsData = null;
-    this.visualizationGraphData = null;
 
-    const connectedNodes = new Set<string>();
+  private getMaximumNPtychSize(
+    graph: any
+  ): number {
 
-    for (const edge of graph.edges ?? []) {
-      connectedNodes.add(edge.source);
-      connectedNodes.add(edge.target);
+    const connectedNodes =
+      new Set<string>();
+
+
+    for (
+      const edge
+      of graph?.edges ?? []
+    ) {
+
+      connectedNodes.add(
+        edge.source
+      );
+
+
+      connectedNodes.add(
+        edge.target
+      );
+
     }
-    const maximumPossibleN = connectedNodes.size;
 
-  if (maximumPossibleN < 2) {
-    return;
+
+    return connectedNodes.size;
+
   }
-    this.findNPtychFromSize(
-      maximumPossibleN
-    );
-  }
-  private findNPtychFromSize(n: number): void {
-
-  if (n < 2) {
-
-    console.log(
-      'No n-ptych found.'
-    );
-
-    return;
-  }
-
-  this.pythonConnector
-    .getNPtychs(n, n)
-    .subscribe({
-
-      next: response => {
-
-        console.log(
-          `K${n} result:`,
-          response
-        );
-
-
-        if (response.length === 0) {
-          this.findNPtychFromSize(
-            n - 1
-          );
-
-          return;
-        }
-        this.nPtychsData = response;
-        this.largestNPtych = response[0];
-
-
-        this.visualizationGraphData =
-          this.convertNPtychToGraph(
-            this.largestNPtych
-          );
-
-
-        console.log(
-          `Largest n-ptych found: K${n}`
-        );
-
-        console.log(
-          'Displayed n-ptych:',
-          this.largestNPtych
-        );
-      },
-
-      error: error => {
-
-        console.error(
-          `Error loading K${n}:`,
-          error
-        );
-
-      }
-
-    });
-}
 
 
   loadGraph(): void {
 
-  this.pythonConnector
-    .getGraph()
-    .subscribe(response => {
+    this.pythonConnector
+      .getGraph()
+      .subscribe({
 
-      console.log('GRAPH:', response);
+        next: response => {
 
-      this.graphData = response;
+          console.log(
+            'GRAPH:',
+            response
+          );
 
-    });
+
+          this.graphData =
+            response;
+
+        },
+
+        error: error => {
+
+          console.error(
+            'GRAPH ERROR:',
+            error
+          );
+
+        }
+
+      });
 
   }
 
@@ -306,12 +632,33 @@ export class AppComponent {
   ): void {
 
     this.pythonConnector
-      .getNPtychs(nFrom, nTo)
-      .subscribe(response => {
+      .getNPtychs(
+        nFrom,
+        nTo
+      )
+      .subscribe({
 
-        console.log('N-PTYCHS:', response);
+        next: response => {
 
-        this.nPtychsData = response;
+          console.log(
+            'N-PTYCHS:',
+            response
+          );
+
+
+          this.nPtychsData =
+            response;
+
+        },
+
+        error: error => {
+
+          console.error(
+            'N-PTYCH ERROR:',
+            error
+          );
+
+        }
 
       });
 
@@ -324,12 +671,33 @@ export class AppComponent {
   ): void {
 
     this.pythonConnector
-      .getHotspots(minH, maxH)
-      .subscribe(response => {
+      .getHotspots(
+        minH,
+        maxH
+      )
+      .subscribe({
 
-        console.log('HOTSPOTS:', response);
+        next: response => {
 
-        this.hotspotsData = response;
+          console.log(
+            'HOTSPOTS:',
+            response
+          );
+
+
+          this.hotspotsData =
+            response;
+
+        },
+
+        error: error => {
+
+          console.error(
+            'HOTSPOT ERROR:',
+            error
+          );
+
+        }
 
       });
 
@@ -342,12 +710,33 @@ export class AppComponent {
   ): void {
 
     this.pythonConnector
-      .getPaths(minNodes, maxNodes)
-      .subscribe(response => {
+      .getPaths(
+        minNodes,
+        maxNodes
+      )
+      .subscribe({
 
-        console.log('PATHS:', response);
+        next: response => {
 
-        this.pathsData = response;
+          console.log(
+            'PATHS:',
+            response
+          );
+
+
+          this.pathsData =
+            response;
+
+        },
+
+        error: error => {
+
+          console.error(
+            'PATH ERROR:',
+            error
+          );
+
+        }
 
       });
 
