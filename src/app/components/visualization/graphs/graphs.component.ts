@@ -254,6 +254,19 @@ export class GraphsComponent
       d3.zoomIdentity;
 
 
+  /*
+   * Pri expand/collapse si zapamätáme obrazovkovú pozíciu
+   * kliknutého hierarchy node. Po novom d3.tree() layoute
+   * upravíme transform tak, aby karta ostala na rovnakom
+   * mieste obrazovky a celý strom používateľovi neuskočil.
+   */
+  private hierarchyAnchor: {
+    pathId: string;
+    screenX: number;
+    screenY: number;
+  } | null = null;
+
+
   private detailTransform:
     d3.ZoomTransform =
       d3.zoomIdentity;
@@ -472,6 +485,9 @@ export class GraphsComponent
 
 
     this.selectedPathId = null;
+
+
+    this.hierarchyAnchor = null;
 
 
     this.focusedStructure = null;
@@ -1078,6 +1094,41 @@ export class GraphsComponent
       hierarchyNode.data;
 
 
+    /*
+     * Pred relayoutom si uložíme PRESNÚ screen pozíciu
+     * karty, na ktorú používateľ klikol.
+     *
+     * d3.tree() pri rozbalení vetvy prepočíta x súradnice
+     * celého stromu. Bez tejto kotvy by preto hierarchy
+     * vizuálne odskočila do strany.
+     */
+    const currentWorldX =
+      hierarchyNode.x;
+
+
+    const currentWorldY =
+      hierarchyNode.y -
+      this.VERTICAL_SPACING;
+
+
+    this.hierarchyAnchor = {
+
+      pathId:
+        node.pathId,
+
+      screenX:
+        this.hierarchyTransform.applyX(
+          currentWorldX
+        ),
+
+      screenY:
+        this.hierarchyTransform.applyY(
+          currentWorldY
+        )
+
+    };
+
+
     if (
       !node.structure
     ) {
@@ -1190,7 +1241,14 @@ export class GraphsComponent
       NPtychStructure
   ): void {
 
+    this.hierarchyAnchor =
+      null;
+
+
     this.cancelPendingClick();
+
+
+    this.detailSimulation?.stop();
 
 
     this.focusedStructure =
@@ -1231,12 +1289,19 @@ export class GraphsComponent
 
 
     /*
-     * hierarchyTransform sme nemenili,
-     * takže sa vraciame presne tam,
-     * kde sme predtým boli.
+     * Pri prechode späť do hierarchy view resetneme kameru.
+     * Takto SVG nikdy nezdedí interný D3 zoom stav z detailu.
      */
+    this.hierarchyTransform =
+      d3.zoomIdentity;
+
+
+    this.hierarchyAnchor =
+      null;
+
+
     this.renderHierarchy(
-      false
+      true
     );
 
   }
@@ -1694,6 +1759,17 @@ export class GraphsComponent
     );
 
 
+    /*
+     * Synchronizujeme aj interný D3 __zoom stav SVG.
+     * Samotný transform na <g> nestačí - pri prvom pan/zoom
+     * by sa inak SVG mohlo vrátiť na starú kameru.
+     */
+    svg.call(
+      zoomBehavior.transform,
+      this.hierarchyTransform
+    );
+
+
     svg.on(
       'dblclick.zoom',
       null
@@ -1767,6 +1843,93 @@ export class GraphsComponent
      */
     const hierarchyYOffset =
       this.VERTICAL_SPACING;
+
+
+    /* ====================================================================== */
+    /* STABILIZE HIERARCHY AFTER EXPAND / COLLAPSE                            */
+    /* ====================================================================== */
+
+    if (
+      !resetView &&
+      this.hierarchyAnchor
+    ) {
+
+      const anchor =
+        this.hierarchyAnchor;
+
+
+      const anchorNode =
+        visibleNodes.find(
+          visibleNode =>
+            visibleNode.data.pathId ===
+            anchor.pathId
+        );
+
+
+      if (anchorNode) {
+
+        const newWorldX =
+          anchorNode.x;
+
+
+        const newWorldY =
+          anchorNode.y -
+          hierarchyYOffset;
+
+
+        const scale =
+          this.hierarchyTransform.k;
+
+
+        const translateX =
+          anchor.screenX -
+          newWorldX *
+          scale;
+
+
+        const translateY =
+          anchor.screenY -
+          newWorldY *
+          scale;
+
+
+        this.hierarchyTransform =
+          d3.zoomIdentity
+            .translate(
+              translateX,
+              translateY
+            )
+            .scale(
+              scale
+            );
+
+
+        world.attr(
+          'transform',
+          this.hierarchyTransform
+            .toString()
+        );
+
+
+        /*
+         * Znovu synchronizujeme internú D3 kameru s novým
+         * transformom vypočítaným podľa anchor node.
+         */
+        svg.call(
+          zoomBehavior.transform,
+          this.hierarchyTransform
+        );
+
+      }
+
+
+      /*
+       * Kotva platí iba pre tento jeden rerender.
+       */
+      this.hierarchyAnchor =
+        null;
+
+    }
 
 
     /* ====================================================================== */
@@ -2952,16 +3115,50 @@ export class GraphsComponent
     /* DATA                                                                   */
     /* ====================================================================== */
 
+    const centerX =
+      width / 2;
+
+
+    const centerY =
+      height / 2;
+
+
+    /*
+     * Vrcholy detailu nezačnú na D3 default pozíciách pri 0,0.
+     * Rozložíme ich rovno okolo stredu viewportu, takže graf
+     * po otvorení nevyzerá, že priletel z pravého dolného rohu.
+     */
+    const initialRadius =
+      Math.max(
+        150,
+        structure.size *
+        42
+      );
+
+
     const nodes:
       DetailNode[] =
       structure.members.map(
-        member => {
+        (
+          member,
+          index
+        ) => {
 
           const lines =
             this.wrapAttributeLabel(
               member,
               this.ATTRIBUTE_LINE_LENGTH
             );
+
+
+          const angle =
+            (
+              2 *
+              Math.PI *
+              index
+            ) /
+            structure.members.length -
+            Math.PI / 2;
 
 
           return {
@@ -2977,7 +3174,21 @@ export class GraphsComponent
                 30 +
                 lines.length *
                 18
-              )
+              ),
+
+            x:
+              centerX +
+              Math.cos(
+                angle
+              ) *
+              initialRadius,
+
+            y:
+              centerY +
+              Math.sin(
+                angle
+              ) *
+              initialRadius
 
           };
 
@@ -3127,6 +3338,17 @@ export class GraphsComponent
 
     svg.call(
       zoomBehavior
+    );
+
+
+    /*
+     * Detail view má vlastnú kameru. Synchronizujeme aj
+     * interný D3 __zoom stav, aby prvý drag canvasu
+     * nespôsobil teleport na transform z hierarchy view.
+     */
+    svg.call(
+      zoomBehavior.transform,
+      this.detailTransform
     );
 
 
@@ -3557,9 +3779,37 @@ export class GraphsComponent
           'center',
 
           d3.forceCenter(
-            width / 2,
-            height / 2
+            centerX,
+            centerY
           )
+        )
+
+        /*
+         * Jemné priťahovanie k stredu drží celý detailný graf
+         * v strede aj po tom, čo link/charge forces začnú pracovať.
+         */
+        .force(
+          'x',
+
+          d3
+            .forceX<DetailNode>(
+              centerX
+            )
+            .strength(
+              0.035
+            )
+        )
+
+        .force(
+          'y',
+
+          d3
+            .forceY<DetailNode>(
+              centerY
+            )
+            .strength(
+              0.035
+            )
         )
 
         .force(
@@ -4577,6 +4827,10 @@ export class GraphsComponent
 
 
     this.selectedPathId =
+      null;
+
+
+    this.hierarchyAnchor =
       null;
 
 
