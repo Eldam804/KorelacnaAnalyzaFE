@@ -195,7 +195,8 @@ export class GraphsComponent
   }
 
   get emptyStateText(): string {
-    return 'No graph data is available for the current dataset.';
+    //No graph data is available or the current dataset doesn't have any correlations.
+    return 'No graph data is available or the current dataset doesn\'t have any correlations.';
   }
 
   ngAfterViewInit(): void {
