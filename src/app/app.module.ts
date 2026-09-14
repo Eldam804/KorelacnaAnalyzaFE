@@ -18,6 +18,10 @@ import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSnackBarModule } from '@angular/material/snack-bar';
 import { FormsModule } from '@angular/forms';
+import {
+  MatProgressSpinnerModule
+} from '@angular/material/progress-spinner';
+
 @NgModule({
   declarations: [
     AppComponent,
@@ -36,6 +40,7 @@ import { FormsModule } from '@angular/forms';
     MatIconModule,
     MatDialogModule,
     MatFormFieldModule,
+    MatProgressSpinnerModule,
     MatInputModule,
     MatSnackBarModule,
     MatDialogModule,

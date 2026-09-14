@@ -2,6 +2,9 @@
   display: block;
   width: 100%;
   box-sizing: border-box;
+
+  /* Potrebujeme iba kvôli loading overlayu. */
+  position: relative;
 }
 
 
@@ -13,17 +16,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-
   gap: 10px;
-
   margin: 0 !important;
   padding: 24px 24px 22px 24px !important;
-
   font-size: 20px;
   font-weight: 600;
-
   border-bottom: 1px solid #e5e7eb;
-
   box-sizing: border-box;
 }
 
@@ -39,17 +37,13 @@
 mat-dialog-content {
   width: 480px;
   max-width: 100%;
-
   padding: 26px 24px 18px 24px !important;
-
   box-sizing: border-box;
 }
 
 .description {
   margin: 0 0 26px 0;
-
   color: #6b7280;
-
   line-height: 1.55;
 }
 
@@ -61,23 +55,16 @@ mat-dialog-content {
 .upload-area {
   width: 100%;
   min-height: 178px;
-
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-
   padding: 20px;
-
   border: 2px dashed #7c8de1;
   border-radius: 12px;
-
   background: #f8f9fb;
-
   cursor: pointer;
-
   box-sizing: border-box;
-
   transition:
     background 0.15s ease,
     border-color 0.15s ease;
@@ -91,26 +78,20 @@ mat-dialog-content {
 .upload-icon {
   width: 44px;
   height: 44px;
-
   margin-bottom: 10px;
-
   font-size: 44px;
-
   color: #3f51b5;
 }
 
 .upload-title {
   font-size: 16px;
   font-weight: 600;
-
   color: #111827;
 }
 
 .upload-description {
   margin-top: 6px;
-
   font-size: 13px;
-
   color: #6b7280;
 }
 
@@ -121,64 +102,46 @@ mat-dialog-content {
 
 .selected-file {
   width: 100%;
-
   display: flex;
   align-items: center;
-
   padding: 14px;
-
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-
   background: #f8f9fb;
-
   box-sizing: border-box;
 }
 
 .file-icon {
   flex: 0 0 42px;
-
   width: 42px;
   height: 42px;
-
   display: flex;
   align-items: center;
   justify-content: center;
-
   margin-right: 12px;
-
   border-radius: 8px;
-
   background: rgba(63, 81, 181, 0.1);
-
   color: #3f51b5;
 }
 
 .file-information {
   flex: 1 1 auto;
-
   min-width: 0;
-
   display: flex;
   flex-direction: column;
 }
 
 .file-name {
   overflow: hidden;
-
   font-weight: 600;
-
   color: #1f2937;
-
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .file-size {
   margin-top: 3px;
-
   font-size: 12px;
-
   color: #6b7280;
 }
 
@@ -189,7 +152,6 @@ mat-dialog-content {
 
 .alpha-field {
   width: 100%;
-
   margin-top: 24px;
 }
 
@@ -201,13 +163,9 @@ mat-dialog-content {
 .error-message {
   display: flex;
   align-items: center;
-
   gap: 6px;
-
   margin-top: 8px;
-
   font-size: 13px;
-
   color: #d32f2f;
 }
 
@@ -218,23 +176,17 @@ mat-dialog-content {
 
 .dialog-actions {
   width: 100%;
-
   display: flex !important;
   align-items: center !important;
-
   margin: 0 !important;
-
   padding: 16px 24px 20px 24px !important;
-
   border-top: 1px solid #e5e7eb;
-
   box-sizing: border-box;
 }
 
 .action-buttons {
   display: flex;
   align-items: center;
-
   gap: 10px;
 
   /* Toto zatlačí celú skupinu doprava */
@@ -243,15 +195,14 @@ mat-dialog-content {
 
 .action-buttons button {
   flex-shrink: 0;
-
   margin: 0 !important;
-
   border-radius: 8px;
 }
 
 .action-buttons button[mat-flat-button] {
   min-width: 124px;
 }
+
 
 /* -------------------------------------------------------------------------- */
 /* MATERIAL FIELD                                                             */
@@ -274,7 +225,6 @@ mat-dialog-content {
 
   mat-dialog-content {
     width: 100%;
-
     padding-left: 18px !important;
     padding-right: 18px !important;
   }
@@ -292,4 +242,94 @@ mat-dialog-content {
   .action-buttons {
     transform: translateX(25px);
   }
+
+}
+
+
+/* ========================================================================== */
+/* LOADING - NOVÉ, NIČ NAD TÝMTO SME NEMENILI                               */
+/* ========================================================================== */
+
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+
+  z-index: 1000;
+
+  display: flex;
+  flex-direction: column;
+
+  align-items: center;
+  justify-content: center;
+
+  gap: 13px;
+
+  background: rgba(255, 255, 255, 0.96);
+
+  border-radius: 4px;
+}
+
+
+.loading-spinner {
+  width: 46px;
+  height: 46px;
+
+  box-sizing: border-box;
+
+  border: 4px solid #d9def5;
+
+  border-top-color: #3f51b5;
+
+  border-radius: 50%;
+
+  animation: dataset-loading-spin 0.8s linear infinite;
+
+  /*
+   * Browser dostane hint, že transform
+   * má animovať samostatne.
+   */
+  will-change: transform;
+}
+
+
+@keyframes dataset-loading-spin {
+
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+
+}
+
+
+.loading-title {
+  margin-top: 6px;
+
+  font-size: 16px;
+  font-weight: 600;
+
+  color: #424242;
+}
+
+
+.loading-description {
+  font-size: 13px;
+
+  color: #6b7280;
+
+  text-align: center;
+}
+
+
+.loading-hint {
+  margin-top: 3px;
+
+  font-size: 12px;
+
+  color: #9ca3af;
+
+  text-align: center;
 }

@@ -135,40 +135,112 @@ export class AppComponent {
 
   openAddFiles(): void {
 
-    const dialogRef =
-      this.dialog.open(
-        AddFilesComponent,
-        {
-          width: '460px',
-          maxWidth: '92vw',
-          disableClose: true
+  const dialogRef =
+    this.dialog.open(
+      AddFilesComponent,
+      {
+        width: '460px',
+        maxWidth: '92vw',
+        disableClose: true
+      }
+    );
+
+
+  dialogRef
+    .afterClosed()
+    .subscribe(
+      (
+        result:
+          AddFilesDialogResult |
+          undefined
+      ) => {
+
+        /*
+         * Cancel.
+         */
+        if (!result) {
+          return;
         }
-      );
 
 
-    dialogRef
-      .afterClosed()
-      .subscribe(
-        (
-          result:
-            AddFilesDialogResult |
-            undefined
-        ) => {
+        /*
+         * ANALÝZA JE V TEJTO CHVÍLI
+         * UŽ KOMPLETNE HOTOVÁ.
+         */
 
-          if (!result) {
-            return;
+
+        this.analysisResult =
+          result.analysis;
+
+
+        this.graphData =
+          result.analysis.graph;
+
+
+        this.nPtychsData =
+          result.nPtychs;
+
+
+        this.pathsData =
+          result.paths;
+
+
+        this.hotspotsData =
+          result.hotspots;
+
+
+        this.loadedFileName =
+          result.analysis.file;
+
+
+        this.currentAlpha =
+          result.analysis.alpha;
+
+
+        this.selectedGraphType =
+          'n-ptychs';
+
+
+        console.log(
+          'COMPLETE ANALYSIS:',
+          result
+        );
+
+
+        console.log(
+          'N-PTYCH COUNT:',
+          result.nPtychs.length
+        );
+
+
+        console.log(
+          'PATH COUNT:',
+          result.paths.length
+        );
+
+
+        console.log(
+          'HOTSPOT COUNT:',
+          result.hotspots.length
+        );
+
+
+        this.snackBar.open(
+
+          `Dataset "${result.analysis.file}" bol analyzovaný.`,
+
+          'OK',
+
+          {
+            duration: 3000
           }
 
+        );
 
-          this.analyzeCsv(
-            result.file,
-            result.alpha
-          );
+      }
+    );
 
-        }
-      );
-
-  }
+}
 
 
   // =========================================================================

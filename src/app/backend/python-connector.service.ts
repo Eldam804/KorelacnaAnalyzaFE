@@ -1,6 +1,23 @@
 import { Injectable } from '@angular/core';
-import { HttpClient, HttpParams } from '@angular/common/http';
-import { Observable } from 'rxjs';
+import {
+  HttpClient,
+  HttpParams
+} from '@angular/common/http';
+
+import {
+  forkJoin,
+  Observable,
+  of,
+  switchMap
+} from 'rxjs';
+
+
+export interface CompleteAnalysisResult {
+  analysis: any;
+  nPtychs: any[];
+  paths: any[];
+  hotspots: any[];
+}
 
 
 @Injectable({
@@ -8,22 +25,33 @@ import { Observable } from 'rxjs';
 })
 export class PythonConnectorService {
 
-  private readonly baseUrl = 'http://127.0.0.1:8000';
+  private readonly baseUrl =
+    'http://127.0.0.1:8000';
 
 
-  constructor(private http: HttpClient) {}
+  constructor(
+    private http: HttpClient
+  ) {}
 
 
-  // -------------------------------------------------------------------------
-  // ANALYZE CSV
-  // -------------------------------------------------------------------------
+  analyze(
+    file: File,
+    alpha: number
+  ): Observable<any> {
 
-  analyze(file: File, alpha: number): Observable<any> {
+    const formData =
+      new FormData();
 
-    const formData = new FormData();
+    formData.append(
+      'file',
+      file
+    );
 
-    formData.append('file', file);
-    formData.append('alpha', alpha.toString());
+    formData.append(
+      'alpha',
+      alpha.toString()
+    );
+
 
     return this.http.post<any>(
       `${this.baseUrl}/analyze`,
@@ -32,81 +60,212 @@ export class PythonConnectorService {
   }
 
 
-  // -------------------------------------------------------------------------
-  // COMPLETE FILTERED GRAPH
-  // -------------------------------------------------------------------------
+  /*
+   * Kompletná analýza.
+   *
+   * Modal čaká až na dokončenie CELÉHO tohto Observable.
+   */
+  analyzeComplete(
+    file: File,
+    alpha: number
+  ): Observable<CompleteAnalysisResult> {
 
-  getGraph(): Observable<any> {
+    return this
+      .analyze(
+        file,
+        alpha
+      )
+      .pipe(
+
+        switchMap(
+          analysis => {
+
+            const graph =
+              analysis.graph;
+
+
+            const connectedNodes =
+              new Set<string>();
+
+
+            for (
+              const edge
+              of graph?.edges ?? []
+            ) {
+
+              connectedNodes.add(
+                edge.source
+              );
+
+              connectedNodes.add(
+                edge.target
+              );
+
+            }
+
+
+            const maximumNPtychSize =
+              connectedNodes.size;
+
+
+            /*
+             * K2 už medzi N-ptychy
+             * vizuálne nepoužívame.
+             */
+            const nPtychsRequest =
+
+              maximumNPtychSize >= 3
+
+                ? this.getNPtychs(
+                    3,
+                    maximumNPtychSize
+                  )
+
+                : of<any[]>([]);
+
+
+            /*
+             * Po /analyze už ACTIVE_GRAPH
+             * na Pythone existuje.
+             *
+             * Tieto tri výpočty môžu ísť paralelne.
+             */
+            return forkJoin({
+
+              analysis:
+                of(
+                  analysis
+                ),
+
+              nPtychs:
+                nPtychsRequest,
+
+              paths:
+                of<any[]>([]),
+
+              hotspots:
+                this.getHotspots(
+                  2
+                )
+
+            });
+
+          }
+        )
+
+      );
+
+  }
+
+
+  getGraph():
+    Observable<any> {
 
     return this.http.get<any>(
       `${this.baseUrl}/graph`
     );
+
   }
 
-
-  // -------------------------------------------------------------------------
-  // N-PTYCHS
-  // -------------------------------------------------------------------------
 
   getNPtychs(
     nFrom: number,
     nTo: number
   ): Observable<any[]> {
 
-    const params = new HttpParams()
-      .set('n_from', nFrom)
-      .set('n_to', nTo);
+    const params =
+      new HttpParams()
+
+        .set(
+          'n_from',
+          nFrom
+        )
+
+        .set(
+          'n_to',
+          nTo
+        );
+
 
     return this.http.get<any[]>(
       `${this.baseUrl}/h-ptychy`,
-      { params }
+      {
+        params
+      }
     );
+
   }
 
-
-  // -------------------------------------------------------------------------
-  // HOTSPOTS
-  // -------------------------------------------------------------------------
 
   getHotspots(
     minH: number = 2,
     maxH?: number
   ): Observable<any[]> {
 
-    let params = new HttpParams()
-      .set('min_h', minH);
+    let params =
+      new HttpParams()
+        .set(
+          'min_h',
+          minH
+        );
 
-    if (maxH !== undefined) {
-      params = params.set('max_h', maxH);
+
+    if (
+      maxH !== undefined
+    ) {
+
+      params =
+        params.set(
+          'max_h',
+          maxH
+        );
+
     }
+
 
     return this.http.get<any[]>(
       `${this.baseUrl}/hotspots`,
-      { params }
+      {
+        params
+      }
     );
+
   }
 
-
-  // -------------------------------------------------------------------------
-  // PATHS
-  // -------------------------------------------------------------------------
 
   getPaths(
     minNodes: number = 2,
     maxNodes?: number
   ): Observable<any[]> {
 
-    let params = new HttpParams()
-      .set('min_nodes', minNodes);
+    let params =
+      new HttpParams()
+        .set(
+          'min_nodes',
+          minNodes
+        );
 
-    if (maxNodes !== undefined) {
-      params = params.set('max_nodes', maxNodes);
+
+    if (
+      maxNodes !== undefined
+    ) {
+
+      params =
+        params.set(
+          'max_nodes',
+          maxNodes
+        );
+
     }
+
 
     return this.http.get<any[]>(
       `${this.baseUrl}/cesty`,
-      { params }
+      {
+        params
+      }
     );
+
   }
 
 }

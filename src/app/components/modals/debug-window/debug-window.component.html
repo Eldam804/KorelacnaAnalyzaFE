@@ -9,14 +9,14 @@
 
       <div>
         <h2>Python Debug</h2>
-        <span>Výstupy korelačného backendu</span>
+        <span>Backend output</span>
       </div>
     </div>
 
     <button
       mat-icon-button
       type="button"
-      matTooltip="Zavrieť"
+      matTooltip="Close"
       (click)="close()">
 
       <mat-icon>close</mat-icon>
@@ -47,7 +47,7 @@
 
               <mat-icon>analytics</mat-icon>
 
-              <span>Analýza datasetu</span>
+              <span>Dataset analysis</span>
 
             </div>
 
@@ -59,7 +59,7 @@
               class="status"
               [class.available]="data.analysis">
 
-              {{ data.analysis ? 'Načítané' : 'Bez dát' }}
+              {{ data.analysis ? 'Loaded' : 'No data' }}
 
             </span>
 
@@ -75,12 +75,12 @@
           <ul class="summary-list">
 
             <li *ngIf="data.analysis.file">
-              <strong>Súbor:</strong>
+              <strong>File:</strong>
               {{ data.analysis.file }}
             </li>
 
             <li *ngIf="data.analysis.rows !== undefined">
-              <strong>Počet riadkov:</strong>
+              <strong>Rows:</strong>
               {{ data.analysis.rows }}
             </li>
 
@@ -104,6 +104,11 @@
               {{ data.analysis.max_D }}
             </li>
 
+            <li *ngIf="data.analysis.processing_time_seconds !== undefined">
+              <strong>Processing time:</strong>
+              {{ data.analysis.processing_time_seconds | number:'1.3-3' }} s
+            </li>
+
           </ul>
 
           <div class="json-label">
@@ -116,7 +121,7 @@
 
         <ng-template #noAnalysis>
           <div class="empty-state">
-            Zatiaľ nebola vykonaná analýza datasetu.
+            Data analysis was not yet completed.
           </div>
         </ng-template>
 
@@ -135,7 +140,7 @@
 
               <mat-icon>share</mat-icon>
 
-              <span>Graf</span>
+              <span>Graph</span>
 
             </div>
 
@@ -147,7 +152,7 @@
               class="status"
               [class.available]="data.graph">
 
-              {{ data.graph ? 'Načítané' : 'Bez dát' }}
+              {{ data.graph ? 'Loaded' : 'No data' }}
 
             </span>
 
@@ -163,12 +168,12 @@
           <ul class="summary-list">
 
             <li *ngIf="data.graph.nodes">
-              <strong>Vrcholy:</strong>
+              <strong>Nodes:</strong>
               {{ data.graph.nodes.length }}
             </li>
 
             <li *ngIf="data.graph.edges">
-              <strong>Hrany:</strong>
+              <strong>Edges:</strong>
               {{ data.graph.edges.length }}
             </li>
 
@@ -184,7 +189,7 @@
 
         <ng-template #noGraph>
           <div class="empty-state">
-            Graf ešte nebol načítaný.
+            No graph loaded.
           </div>
         </ng-template>
 
@@ -203,7 +208,7 @@
 
               <mat-icon>account_tree</mat-icon>
 
-              <span>N-ptychy</span>
+              <span>N-ptychs</span>
 
             </div>
 
@@ -223,7 +228,7 @@
               class="status"
               [class.available]="data.nPtychs">
 
-              {{ data.nPtychs ? 'výsledkov' : 'Bez dát' }}
+              {{ data.nPtychs ? 'Results' : 'No data' }}
 
             </span>
 
@@ -237,10 +242,12 @@
           *ngIf="data.nPtychs; else noNPtychs">
 
           <ul class="summary-list">
+
             <li>
-              <strong>Počet nájdených:</strong>
+              <strong>Amount found:</strong>
               {{ data.nPtychs.length }}
             </li>
+
           </ul>
 
           <div class="json-label">
@@ -253,76 +260,7 @@
 
         <ng-template #noNPtychs>
           <div class="empty-state">
-            N-ptychy ešte neboli načítané.
-          </div>
-        </ng-template>
-
-      </mat-expansion-panel>
-
-
-      <!-- PATHS -->
-
-      <mat-expansion-panel class="debug-panel">
-
-        <mat-expansion-panel-header>
-
-          <mat-panel-title>
-
-            <div class="panel-title">
-
-              <mat-icon>route</mat-icon>
-
-              <span>Cesty</span>
-
-            </div>
-
-          </mat-panel-title>
-
-          <mat-panel-description>
-
-            <span
-              class="result-count"
-              *ngIf="data.paths">
-
-              {{ data.paths.length }}
-
-            </span>
-
-            <span
-              class="status"
-              [class.available]="data.paths">
-
-              {{ data.paths ? 'výsledkov' : 'Bez dát' }}
-
-            </span>
-
-          </mat-panel-description>
-
-        </mat-expansion-panel-header>
-
-
-        <div
-          class="debug-section"
-          *ngIf="data.paths; else noPaths">
-
-          <ul class="summary-list">
-            <li>
-              <strong>Počet nájdených ciest:</strong>
-              {{ data.paths.length }}
-            </li>
-          </ul>
-
-          <div class="json-label">
-            Raw response
-          </div>
-
-          <pre class="json-output">{{ prettyJson(data.paths) }}</pre>
-
-        </div>
-
-        <ng-template #noPaths>
-          <div class="empty-state">
-            Cesty ešte neboli načítané.
+            N-ptychs were not yet loaded.
           </div>
         </ng-template>
 
@@ -341,7 +279,7 @@
 
               <mat-icon>flare</mat-icon>
 
-              <span>Hotspoty</span>
+              <span>Hotspots</span>
 
             </div>
 
@@ -361,7 +299,7 @@
               class="status"
               [class.available]="data.hotspots">
 
-              {{ data.hotspots ? 'výsledkov' : 'Bez dát' }}
+              {{ data.hotspots ? 'Results' : 'No data' }}
 
             </span>
 
@@ -375,10 +313,12 @@
           *ngIf="data.hotspots; else noHotspots">
 
           <ul class="summary-list">
+
             <li>
-              <strong>Počet nájdených hotspotov:</strong>
+              <strong>Amount found:</strong>
               {{ data.hotspots.length }}
             </li>
+
           </ul>
 
           <div class="json-label">
@@ -391,7 +331,7 @@
 
         <ng-template #noHotspots>
           <div class="empty-state">
-            Hotspoty ešte neboli načítané.
+            Hotspots were not yet loaded.
           </div>
         </ng-template>
 
@@ -413,7 +353,7 @@
       type="button"
       (click)="close()">
 
-      Zavrieť
+      Close
 
     </button>
 
