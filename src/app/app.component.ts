@@ -134,7 +134,7 @@ export class AppComponent {
 
         this.snackBar.open(
 
-          `Dataset "${result.analysis.file}" bol analyzovaný.`,
+          `Dataset "${result.analysis.file}" finished analyzing.`,
 
           'OK',
 
@@ -448,7 +448,7 @@ export class AppComponent {
           this.snackBar.open(
 
             error?.error?.detail ??
-            'Chyba pri analýze CSV.',
+            'Error analyzing CSV.',
 
             'OK',
 
