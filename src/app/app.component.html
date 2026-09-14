@@ -7,23 +7,7 @@
 
   <div class="navigation">
 
-    <button
-      mat-button
-      [class.active]="selectedGraphType === 'n-ptychs'"
-      (click)="selectGraphType('n-ptychs')">
-
-      <mat-icon>account_tree</mat-icon>
-      N-ptychy
-    </button>
-
-    <button
-      mat-button
-      [class.active]="selectedGraphType === 'hotspots'"
-      (click)="selectGraphType('hotspots')">
-
-      <mat-icon>flare</mat-icon>
-      Hotspoty
-    </button>
+   
 
   </div>
 
@@ -38,13 +22,22 @@
 
       <mat-icon>upload_file</mat-icon>
     </button>
-
+    
     <button
       mat-icon-button
       matTooltip="Debug"
       (click)="openDebugWindow()">
 
       <mat-icon>bug_report</mat-icon>
+    </button>
+
+    <button
+      mat-icon-button
+      matTooltip="Export visualization as SVG"
+      [disabled]="!graphData"
+      (click)="exportVisualization()">
+
+      <mat-icon>photo_camera</mat-icon>
     </button>
 
   </div>
@@ -55,11 +48,9 @@
 <main class="content">
 
   <app-graphs
-    [graphType]="selectedGraphType"
-    [nPtychsData]="nPtychsData"
-    [pathsData]="pathsData"
-    [hotspotsData]="hotspotsData"
-    >
+  [graphData]="graphData"
+  [nPtychsData]="nPtychsData"
+  [hotspotsData]="hotspotsData">
 </app-graphs>
 
 </main>

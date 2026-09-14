@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { Component, ViewChild } from '@angular/core';
 
 import { PythonConnectorService } from './backend/python-connector.service';
 
@@ -25,10 +25,9 @@ import {
 } from './components/modals/debug-window/debug-window.component';
 
 
-export type GraphType =
-  | 'n-ptychs'
-  | 'paths'
-  | 'hotspots';
+import {
+  GraphsComponent
+} from './components/visualization/graphs/graphs.component';
 
 
 @Component({
@@ -37,101 +36,25 @@ export type GraphType =
   styleUrls: ['./app.component.css']
 })
 export class AppComponent {
-
-
-  // -------------------------------------------------------------------------
-  // VIEW
-  // -------------------------------------------------------------------------
-
-  selectedGraphType: GraphType = 'n-ptychs';
-
-
-  // -------------------------------------------------------------------------
-  // ANALYSIS DATA
-  // -------------------------------------------------------------------------
-
-  /*
-   * Kompletný response z /analyze.
-   */
   analysisResult: any | null = null;
-
-
-  /*
-   * Celý prefiltrovaný korelačný graf.
-   *
-   * Viewer ho momentálne priamo nezobrazuje,
-   * ale potrebujeme ho pre debug a ďalšie analýzy.
-   */
   graphData: any | null = null;
-
-
-  /*
-   * VŠETKY N-ptychy.
-   */
   nPtychsData: any[] | null = null;
-
-
-  /*
-   * VŠETKY cesty.
-   */
   pathsData: any[] | null = null;
-
-
-  /*
-   * VŠETKY hotspoty.
-   */
   hotspotsData: any[] | null = null;
-
-
-  // -------------------------------------------------------------------------
-  // DATASET INFO
-  // -------------------------------------------------------------------------
-
   loadedFileName: string | null = null;
-
   currentAlpha: number | null = null;
-
-
-  // -------------------------------------------------------------------------
-  // LOADING
-  // -------------------------------------------------------------------------
-
-  /*
-   * Toto teraz pokrýva:
-   *
-   * 1. CSV analýzu
-   * 2. výpočet N-ptychov
-   * 3. výpočet ciest
-   * 4. výpočet hotspotov
-   *
-   * Čiže loading skončí až keď máme všetko.
-   */
   isLoading = false;
-
+  @ViewChild(GraphsComponent)
+  graphsComponent?: GraphsComponent;
+  exportVisualization(): void {
+    this.graphsComponent?.exportVisualizationSvg();
+  }
 
   constructor(
     private pythonConnector: PythonConnectorService,
     private dialog: MatDialog,
     private snackBar: MatSnackBar
   ) {}
-
-
-  // =========================================================================
-  // NAVIGATION
-  // =========================================================================
-
-  selectGraphType(
-    type: GraphType
-  ): void {
-
-    this.selectedGraphType = type;
-
-  }
-
-
-  // =========================================================================
-  // ADD FILE MODAL
-  // =========================================================================
 
   openAddFiles(): void {
 
@@ -154,20 +77,9 @@ export class AppComponent {
           AddFilesDialogResult |
           undefined
       ) => {
-
-        /*
-         * Cancel.
-         */
         if (!result) {
           return;
         }
-
-
-        /*
-         * ANALÝZA JE V TEJTO CHVÍLI
-         * UŽ KOMPLETNE HOTOVÁ.
-         */
-
 
         this.analysisResult =
           result.analysis;
@@ -195,11 +107,6 @@ export class AppComponent {
 
         this.currentAlpha =
           result.analysis.alpha;
-
-
-        this.selectedGraphType =
-          'n-ptychs';
-
 
         console.log(
           'COMPLETE ANALYSIS:',
@@ -242,11 +149,6 @@ export class AppComponent {
 
 }
 
-
-  // =========================================================================
-  // DEBUG MODAL
-  // =========================================================================
-
   openDebugWindow(): void {
 
     const debugData:
@@ -283,19 +185,11 @@ export class AppComponent {
   }
 
 
-  // =========================================================================
-  // COMPLETE ANALYSIS
-  // =========================================================================
-
   analyzeCsv(
     file: File,
     alpha: number
   ): void {
 
-
-    // -----------------------------------------------------------------------
-    // RESET
-    // -----------------------------------------------------------------------
 
     this.isLoading = true;
 
@@ -314,17 +208,6 @@ export class AppComponent {
     this.currentAlpha = null;
 
 
-    /*
-     * Po každom novom datasete začíname
-     * v N-ptych hierarchy view.
-     */
-    this.selectedGraphType =
-      'n-ptychs';
-
-
-    // -----------------------------------------------------------------------
-    // ANALYZE
-    // -----------------------------------------------------------------------
 
     this.pythonConnector
       .analyze(
@@ -334,10 +217,6 @@ export class AppComponent {
 
       .pipe(
 
-
-        // -------------------------------------------------------------------
-        // SAVE ANALYSIS RESULT
-        // -------------------------------------------------------------------
 
         tap(
           response => {
@@ -366,24 +245,12 @@ export class AppComponent {
           }
         ),
 
-
-        // -------------------------------------------------------------------
-        // AFTER ANALYSIS -> LOAD ALL STRUCTURES
-        // -------------------------------------------------------------------
-
         switchMap(
           response => {
 
             const graph =
               response.graph;
 
-
-            /*
-             * Maximálna možná veľkosť N-ptychu.
-             *
-             * Izolované nodes ignorujeme,
-             * pretože nemôžu byť ani K2.
-             */
             const maximumNPtychSize =
               this.getMaximumNPtychSize(
                 graph
@@ -394,12 +261,6 @@ export class AppComponent {
               'Maximum possible N-ptych size:',
               maximumNPtychSize
             );
-
-
-            /*
-             * Ak graf nemá ani jednu hranu,
-             * N-ptychy nemajú zmysel volať.
-             */
             const nPtychsRequest =
 
               maximumNPtychSize >= 2
@@ -412,26 +273,7 @@ export class AppComponent {
 
                 : of<any[]>([]);
 
-
-            /*
-             * Všetky tri analytické časti
-             * spustíme PARALELNE.
-             *
-             * Python teda počíta:
-             *
-             * N-ptychy
-             * Cesty
-             * Hotspoty
-             *
-             * a Angular čaká, kým všetko skončí.
-             */
             return forkJoin({
-
-
-              // -------------------------------------------------------------
-              // N-PTYCHS
-              // -------------------------------------------------------------
-
               nPtychs:
                 nPtychsRequest.pipe(
 
@@ -452,12 +294,6 @@ export class AppComponent {
                   )
 
                 ),
-
-
-              // -------------------------------------------------------------
-              // PATHS
-              // -------------------------------------------------------------
-
               paths:
                 this.pythonConnector
                   .getPaths(
@@ -482,12 +318,6 @@ export class AppComponent {
                     )
 
                   ),
-
-
-              // -------------------------------------------------------------
-              // HOTSPOTS
-              // -------------------------------------------------------------
-
               hotspots:
                 this.pythonConnector
                   .getHotspots(
