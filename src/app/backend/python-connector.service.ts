@@ -19,6 +19,11 @@ export interface CompleteAnalysisResult {
   hotspots: any[];
 }
 
+export type CorrelationMethod =
+  | 'pearson'
+  | 'spearman'
+  | 'kendall';
+
 
 @Injectable({
   providedIn: 'root'
@@ -36,22 +41,14 @@ export class PythonConnectorService {
 
   analyze(
     file: File,
-    alpha: number
+    alpha: number,
+    method: CorrelationMethod = 'pearson'
   ): Observable<any> {
 
-    const formData =
-      new FormData();
-
-    formData.append(
-      'file',
-      file
-    );
-
-    formData.append(
-      'alpha',
-      alpha.toString()
-    );
-
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('alpha', alpha.toString());
+    formData.append('method', method);
 
     return this.http.post<any>(
       `${this.baseUrl}/analyze`,
@@ -67,13 +64,14 @@ export class PythonConnectorService {
    */
   analyzeComplete(
     file: File,
-    alpha: number
+    alpha: number,
+    method: CorrelationMethod = 'pearson'
   ): Observable<CompleteAnalysisResult> {
 
-    return this
-      .analyze(
+    return this.analyze(
         file,
-        alpha
+        alpha,
+        method
       )
       .pipe(
 

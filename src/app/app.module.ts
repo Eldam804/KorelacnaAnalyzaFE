@@ -21,7 +21,7 @@ import { FormsModule } from '@angular/forms';
 import {
   MatProgressSpinnerModule
 } from '@angular/material/progress-spinner';
-
+import { MatSelectModule } from '@angular/material/select';
 @NgModule({
   declarations: [
     AppComponent,
@@ -45,6 +45,7 @@ import {
     MatSnackBarModule,
     MatDialogModule,
     MatExpansionModule,
+    MatSelectModule,
     MatTooltipModule
   ],
   providers: [HttpClientModule],

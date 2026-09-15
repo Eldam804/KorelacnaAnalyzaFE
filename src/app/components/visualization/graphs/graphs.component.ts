@@ -69,6 +69,8 @@ interface HierarchyViewNode {
   parentViewPathId: string | null;
   structure: AnalysisStructure | null;
   virtualRoot: boolean;
+  aggregateKind?: 'hotspot-h2';
+  aggregateStructures?: AnalysisStructure[];
 }
 
 interface HierarchyDatasetState {
@@ -154,7 +156,10 @@ export class GraphsComponent
   private readonly CARD_WIDTH = 220;
   private readonly CARD_HEIGHT = 220;
   private readonly HORIZONTAL_SPACING = 270;
+  private readonly DEEP_HIERARCHY_HORIZONTAL_FACTOR = 0.88;
   private readonly VERTICAL_SPACING = 280;
+  private readonly HOTSPOT_H2_GROUP_THRESHOLD = 20;
+  private readonly HOTSPOT_H2_GROUP_PATH = '__HOTSPOT_H2_GROUP__';
   private readonly MAIN_GRAPH_MIN_WIDTH = 900;
   private readonly MAIN_GRAPH_MIN_HEIGHT = 560;
   private readonly MAIN_GRAPH_MAX_WIDTH = 2400;
@@ -375,17 +380,36 @@ export class GraphsComponent
 
     state.rootStructures = this.findRootStructures(state);
 
+    const groupedHotspots = this.getGroupedRootHotspots(state);
+    const groupedHotspotKeys = new Set(
+      groupedHotspots.map(structure => structure.key)
+    );
+
     state.rootStructures.forEach((structure, index) => {
+      if (groupedHotspotKeys.has(structure.key)) {
+        return;
+      }
+
       state.expandedViewPaths.add(
         this.createRootViewPath(structure, index)
       );
     });
 
     if (state.rootStructures.length > 0) {
-      state.selectedViewPathId = this.createRootViewPath(
-        state.rootStructures[0],
-        0
+      const firstVisibleRoot = state.rootStructures.find(
+        structure => !groupedHotspotKeys.has(structure.key)
       );
+
+      if (firstVisibleRoot) {
+        const rootIndex = state.rootStructures.indexOf(firstVisibleRoot);
+        state.selectedViewPathId = this.createRootViewPath(
+          firstVisibleRoot,
+          rootIndex
+        );
+      }
+      else if (groupedHotspots.length > 0) {
+        state.selectedViewPathId = this.HOTSPOT_H2_GROUP_PATH;
+      }
     }
 
     return state;
@@ -409,6 +433,58 @@ export class GraphsComponent
       if (!hasParent) {
         roots.push(structure);
       }
+    }
+
+    return roots;
+  }
+
+  private getGroupedRootHotspots(
+    state: HierarchyDatasetState
+  ): AnalysisStructure[] {
+    const h2Roots = state.rootStructures.filter(
+      structure =>
+        structure.kind === 'hotspot' &&
+        structure.size === this.MIN_HOTSPOT_SIZE
+    );
+
+    return h2Roots.length > this.HOTSPOT_H2_GROUP_THRESHOLD
+      ? h2Roots
+      : [];
+  }
+
+  private getRootViewNodes(
+    state: HierarchyDatasetState
+  ): HierarchyViewNode[] {
+    const groupedHotspots = this.getGroupedRootHotspots(state);
+    const groupedKeys = new Set(
+      groupedHotspots.map(structure => structure.key)
+    );
+
+    const roots = state.rootStructures
+      .map((structure, index) => ({
+        structure,
+        index
+      }))
+      .filter(entry => !groupedKeys.has(entry.structure.key))
+      .map(entry => ({
+        viewPathId: this.createRootViewPath(
+          entry.structure,
+          entry.index
+        ),
+        parentViewPathId: '__ROOT__',
+        structure: entry.structure,
+        virtualRoot: false
+      } as HierarchyViewNode));
+
+    if (groupedHotspots.length > 0) {
+      roots.push({
+        viewPathId: this.HOTSPOT_H2_GROUP_PATH,
+        parentViewPathId: '__ROOT__',
+        structure: null,
+        virtualRoot: false,
+        aggregateKind: 'hotspot-h2',
+        aggregateStructures: groupedHotspots
+      });
     }
 
     return roots;
@@ -510,17 +586,20 @@ export class GraphsComponent
     state: HierarchyDatasetState
   ): HierarchyViewNode[] | undefined {
     if (node.virtualRoot) {
-      return state.rootStructures.map(
-        (structure, index) => ({
-          viewPathId: this.createRootViewPath(
-            structure,
-            index
-          ),
-          parentViewPathId: '__ROOT__',
-          structure,
-          virtualRoot: false
-        })
-      );
+      return this.getRootViewNodes(state);
+    }
+
+    if (node.aggregateKind === 'hotspot-h2') {
+      if (!state.expandedViewPaths.has(node.viewPathId)) {
+        return undefined;
+      }
+
+      return (node.aggregateStructures ?? []).map(structure => ({
+        viewPathId: `${node.viewPathId}>${structure.key}`,
+        parentViewPathId: node.viewPathId,
+        structure,
+        virtualRoot: false
+      }));
     }
 
     if (!node.structure) {
@@ -636,7 +715,20 @@ export class GraphsComponent
       .nodeSize([
         this.HORIZONTAL_SPACING,
         this.VERTICAL_SPACING
-      ]);
+      ])
+      .separation((a, b) => {
+        const baseSeparation =
+          a.parent === b.parent ? 1 : 2;
+
+        if (Math.max(a.depth, b.depth) <= 1) {
+          return baseSeparation;
+        }
+
+        return (
+          baseSeparation *
+          this.DEEP_HIERARCHY_HORIZONTAL_FACTOR
+        );
+      });
 
     const pointRoot = treeLayout(root);
     const hierarchyBaseOffset =
@@ -698,12 +790,6 @@ export class GraphsComponent
     renderedNode: RenderedHierarchyNode
   ): void {
     const node = renderedNode.hierarchyNode.data;
-    const structure = node.structure;
-
-    if (!structure) {
-      return;
-    }
-
     const state = this.getState(renderedNode.side);
 
     this.hierarchyAnchor = {
@@ -718,6 +804,24 @@ export class GraphsComponent
     };
 
     state.selectedViewPathId = node.viewPathId;
+
+    if (node.aggregateKind === 'hotspot-h2') {
+      if (state.expandedViewPaths.has(node.viewPathId)) {
+        this.collapseViewPath(node.viewPathId, state);
+      }
+      else {
+        state.expandedViewPaths.add(node.viewPathId);
+      }
+
+      this.renderCombinedView(false);
+      return;
+    }
+
+    const structure = node.structure;
+
+    if (!structure) {
+      return;
+    }
 
     const children = this.getDirectChildren(
       structure,
@@ -1277,6 +1381,11 @@ export class GraphsComponent
         event.stopPropagation();
         this.cancelPendingClick();
 
+        if (node.hierarchyNode.data.aggregateKind === 'hotspot-h2') {
+          this.handleNodeClick(node);
+          return;
+        }
+
         if (node.hierarchyNode.data.structure) {
           this.openStructureDetail(
             node.hierarchyNode.data.structure
@@ -1324,16 +1433,25 @@ export class GraphsComponent
       );
 
     cards.each((renderedNode, index, elements) => {
-      const structure =
-        renderedNode.hierarchyNode.data.structure;
+      const nodeData = renderedNode.hierarchyNode.data;
+      const card = d3.select<SVGGElement, unknown>(
+        elements[index] as SVGGElement
+      );
+
+      if (nodeData.aggregateKind === 'hotspot-h2') {
+        this.drawHotspotH2GroupCard(
+          card,
+          nodeData,
+          state
+        );
+        return;
+      }
+
+      const structure = nodeData.structure;
 
       if (!structure) {
         return;
       }
-
-      const card = d3.select<SVGGElement, unknown>(
-        elements[index] as SVGGElement
-      );
 
       const headerLines = this.getCardHeaderLines(
         structure.members
@@ -1402,6 +1520,98 @@ export class GraphsComponent
 Double-click to open graph`
         );
     });
+  }
+
+  private drawHotspotH2GroupCard(
+    card: d3.Selection<SVGGElement, unknown, null, undefined>,
+    node: HierarchyViewNode,
+    state: HierarchyDatasetState
+  ): void {
+    const count = node.aggregateStructures?.length ?? 0;
+    const expanded = state.expandedViewPaths.has(node.viewPathId);
+
+    card
+      .append('text')
+      .attr('x', 0)
+      .attr('y', -this.CARD_HEIGHT / 2 + 28)
+      .attr('text-anchor', 'middle')
+      .attr(
+        'font-family',
+        'Roboto, Helvetica Neue, sans-serif'
+      )
+      .attr('font-size', 15)
+      .attr('font-weight', 700)
+      .attr('fill', '#111827')
+      .text('H2 HOTSPOTS');
+
+    const mini = card
+      .append('g')
+      .attr('transform', 'translate(0, 4)');
+
+    [-24, 0, 24].forEach((x, index) => {
+      mini
+        .append('circle')
+        .attr('cx', x)
+        .attr('cy', index === 1 ? -18 : 18)
+        .attr('r', index === 1 ? 8 : 6)
+        .attr('fill', index === 1 ? '#f5f3ff' : '#ffffff')
+        .attr('stroke', '#7c3aed')
+        .attr('stroke-width', 2);
+    });
+
+    mini
+      .append('line')
+      .attr('x1', 0)
+      .attr('y1', -10)
+      .attr('x2', -24)
+      .attr('y2', 12)
+      .attr('stroke', '#8b5cf6')
+      .attr('stroke-width', 2);
+
+    mini
+      .append('line')
+      .attr('x1', 0)
+      .attr('y1', -10)
+      .attr('x2', 24)
+      .attr('y2', 12)
+      .attr('stroke', '#8b5cf6')
+      .attr('stroke-width', 2);
+
+    card
+      .append('text')
+      .attr('x', 0)
+      .attr('y', 65)
+      .attr('text-anchor', 'middle')
+      .attr(
+        'font-family',
+        'Roboto, Helvetica Neue, sans-serif'
+      )
+      .attr('font-size', 22)
+      .attr('font-weight', 700)
+      .attr('fill', '#7c3aed')
+      .text(String(count));
+
+    card
+      .append('text')
+      .attr('x', 0)
+      .attr('y', this.CARD_HEIGHT / 2 - 15)
+      .attr('text-anchor', 'middle')
+      .attr(
+        'font-family',
+        'Roboto, Helvetica Neue, sans-serif'
+      )
+      .attr('font-size', 10)
+      .attr('fill', '#9ca3af')
+      .text(
+        `${count} grouped · ${expanded ? 'click to collapse' : 'click to expand'}`
+      );
+
+    card
+      .append('title')
+      .text(
+        `${count} root H2 hotspots
+${expanded ? 'Click to collapse' : 'Click to expand'}`
+      );
   }
 
   private drawMainGraph(

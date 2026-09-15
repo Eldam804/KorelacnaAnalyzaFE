@@ -10,7 +10,6 @@
     Non-numeric characters are automatically ignored.
   </p>
 
-
   <input
     #fileInput
     type="file"
@@ -19,7 +18,6 @@
     [disabled]="isLoading"
     (change)="onFileSelected($event)"
   >
-
 
   <div
     class="upload-area"
@@ -39,7 +37,6 @@
     </div>
 
   </div>
-
 
   <div
     class="selected-file"
@@ -64,7 +61,7 @@
     <button
       mat-icon-button
       type="button"
-      matTooltip="Odstrániť súbor"
+      matTooltip="Remove file"
       [disabled]="isLoading"
       (click)="removeFile()">
 
@@ -74,6 +71,31 @@
 
   </div>
 
+  <mat-form-field
+    appearance="outline"
+    class="alpha-field">
+
+    <mat-label>Correlation method</mat-label>
+
+    <mat-select
+      [disabled]="isLoading"
+      [(ngModel)]="correlationMethod">
+
+      <mat-option value="pearson">
+        Pearson
+      </mat-option>
+
+      <mat-option value="spearman">
+        Spearman
+      </mat-option>
+
+      <mat-option value="kendall">
+        Kendall
+      </mat-option>
+
+    </mat-select>
+
+  </mat-form-field>
 
   <mat-form-field
     appearance="outline"
@@ -97,7 +119,6 @@
 
   </mat-form-field>
 
-
   <div
     class="error-message"
     *ngIf="errorMessage">
@@ -109,7 +130,6 @@
   </div>
 
 </mat-dialog-content>
-
 
 <mat-dialog-actions class="dialog-actions">
 
@@ -138,11 +158,6 @@
   </div>
 
 </mat-dialog-actions>
-
-
-<!-- =============================================================== -->
-<!-- LOADING OVERLAY - jediná nová vizuálna časť                     -->
-<!-- =============================================================== -->
 
 <div
   class="loading-overlay"
