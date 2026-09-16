@@ -157,16 +157,23 @@ export class GraphsComponent
   private readonly CARD_HEIGHT = 220;
   private readonly HORIZONTAL_SPACING = 270;
   private readonly DEEP_HIERARCHY_HORIZONTAL_FACTOR = 0.88;
+  private readonly CROSS_BRANCH_HORIZONTAL_FACTOR = 0.62;
   private readonly VERTICAL_SPACING = 280;
   private readonly HOTSPOT_H2_GROUP_THRESHOLD = 20;
   private readonly HOTSPOT_H2_GROUP_PATH = '__HOTSPOT_H2_GROUP__';
+  private readonly HOTSPOT_H2_GROUP_HORIZONTAL_GAP = 420;
   private readonly MAIN_GRAPH_MIN_WIDTH = 900;
   private readonly MAIN_GRAPH_MIN_HEIGHT = 560;
-  private readonly MAIN_GRAPH_MAX_WIDTH = 2400;
-  private readonly MAIN_GRAPH_MAX_HEIGHT = 1500;
+  private readonly MAIN_GRAPH_MAX_WIDTH = 12000;
+  private readonly MAIN_GRAPH_MAX_HEIGHT = 9000;
   private readonly MAIN_GRAPH_NODE_WIDTH = 170;
   private readonly MAIN_GRAPH_TOP_PADDING = 92;
-  private readonly MAIN_GRAPH_SIDE_PADDING = 90;
+  private readonly MAIN_GRAPH_SIDE_PADDING = 125;
+  private readonly MAIN_GRAPH_HORIZONTAL_SPREAD = 620;
+  private readonly MAIN_GRAPH_VERTICAL_SPREAD = 520;
+  private readonly MAIN_GRAPH_COLLISION_PADDING = 285;
+  private readonly MAIN_GRAPH_BOX_SCALE = 0.88;
+  private readonly MAIN_GRAPH_EDGE_SAFETY = 58;
   private readonly GRAPH_BRANCH_GAP = 120;
   private readonly DETAIL_NODE_WIDTH = 190;
   private readonly ATTRIBUTE_LINE_LENGTH = 15;
@@ -633,23 +640,42 @@ export class GraphsComponent
 
     const columns = Math.max(
       2,
-      Math.ceil(Math.sqrt(Math.max(1, nodeCount)))
+      Math.ceil(
+        Math.sqrt(Math.max(1, nodeCount) * 1.35)
+      )
     );
 
+    const averageDegree = nodeCount > 0
+      ? (edgeCount * 2) / nodeCount
+      : 0;
+
     const widthFromNodes =
-      columns * (this.MAIN_GRAPH_NODE_WIDTH + 95) +
+      columns *
+        (this.MAIN_GRAPH_NODE_WIDTH +
+          this.MAIN_GRAPH_HORIZONTAL_SPREAD) +
       this.MAIN_GRAPH_SIDE_PADDING * 2;
 
     const widthFromEdges =
       this.MAIN_GRAPH_MIN_WIDTH +
-      Math.min(650, edgeCount * 4);
+      Math.min(8200, edgeCount * 42);
+
+    const widthFromDensity =
+      this.MAIN_GRAPH_MIN_WIDTH +
+      nodeCount * 92 +
+      averageDegree * 220;
+
+    const desiredWidth = Math.max(
+      this.MAIN_GRAPH_MIN_WIDTH,
+      widthFromNodes,
+      widthFromEdges,
+      widthFromDensity
+    );
 
     return Math.min(
       this.MAIN_GRAPH_MAX_WIDTH,
       Math.max(
         this.MAIN_GRAPH_MIN_WIDTH,
-        widthFromNodes,
-        widthFromEdges
+        desiredWidth * this.MAIN_GRAPH_BOX_SCALE
       )
     );
   }
@@ -660,7 +686,9 @@ export class GraphsComponent
 
     const columns = Math.max(
       2,
-      Math.ceil(Math.sqrt(Math.max(1, nodeCount)))
+      Math.ceil(
+        Math.sqrt(Math.max(1, nodeCount) * 1.35)
+      )
     );
 
     const rows = Math.max(
@@ -668,21 +696,36 @@ export class GraphsComponent
       Math.ceil(Math.max(1, nodeCount) / columns)
     );
 
+    const averageDegree = nodeCount > 0
+      ? (edgeCount * 2) / nodeCount
+      : 0;
+
     const heightFromNodes =
-      rows * 150 +
+      rows * this.MAIN_GRAPH_VERTICAL_SPREAD +
       this.MAIN_GRAPH_TOP_PADDING +
-      110;
+      210;
 
     const heightFromEdges =
       this.MAIN_GRAPH_MIN_HEIGHT +
-      Math.min(520, edgeCount * 2.25);
+      Math.min(6200, edgeCount * 34);
+
+    const heightFromDensity =
+      this.MAIN_GRAPH_MIN_HEIGHT +
+      nodeCount * 72 +
+      averageDegree * 180;
+
+    const desiredHeight = Math.max(
+      this.MAIN_GRAPH_MIN_HEIGHT,
+      heightFromNodes,
+      heightFromEdges,
+      heightFromDensity
+    );
 
     return Math.min(
       this.MAIN_GRAPH_MAX_HEIGHT,
       Math.max(
         this.MAIN_GRAPH_MIN_HEIGHT,
-        heightFromNodes,
-        heightFromEdges
+        desiredHeight * this.MAIN_GRAPH_BOX_SCALE
       )
     );
   }
@@ -717,16 +760,21 @@ export class GraphsComponent
         this.VERTICAL_SPACING
       ])
       .separation((a, b) => {
-        const baseSeparation =
-          a.parent === b.parent ? 1 : 2;
+        const sameParent = a.parent === b.parent;
+        const baseSeparation = sameParent ? 1 : 2;
 
         if (Math.max(a.depth, b.depth) <= 1) {
           return baseSeparation;
         }
 
+        const branchFactor = sameParent
+          ? 1
+          : this.CROSS_BRANCH_HORIZONTAL_FACTOR;
+
         return (
           baseSeparation *
-          this.DEEP_HIERARCHY_HORIZONTAL_FACTOR
+          this.DEEP_HIERARCHY_HORIZONTAL_FACTOR *
+          branchFactor
         );
       });
 
@@ -734,18 +782,71 @@ export class GraphsComponent
     const hierarchyBaseOffset =
       this.getHierarchyBaseOffset();
 
+    let hotspotH2GroupOffset = 0;
+
+    if (side === 'hotspot') {
+      const descendants = pointRoot.descendants();
+
+      const belongsToH2Group = (
+        node: d3.HierarchyPointNode<HierarchyViewNode>
+      ): boolean =>
+        node.data.viewPathId === this.HOTSPOT_H2_GROUP_PATH ||
+        node.data.viewPathId.startsWith(
+          `${this.HOTSPOT_H2_GROUP_PATH}>`
+        );
+
+      const groupedNodes = descendants.filter(belongsToH2Group);
+      const regularNodes = descendants.filter(node =>
+        !node.data.virtualRoot && !belongsToH2Group(node)
+      );
+
+      if (groupedNodes.length > 0 && regularNodes.length > 0) {
+        const regularRightEdge = Math.max(
+          ...regularNodes.map(node => node.x + this.CARD_WIDTH / 2)
+        );
+
+        const groupedLeftEdge = Math.min(
+          ...groupedNodes.map(node => node.x - this.CARD_WIDTH / 2)
+        );
+
+        const desiredGroupedLeftEdge =
+          regularRightEdge +
+          this.HOTSPOT_H2_GROUP_HORIZONTAL_GAP;
+
+        hotspotH2GroupOffset = Math.max(
+          0,
+          desiredGroupedLeftEdge - groupedLeftEdge
+        );
+      }
+    }
+
     const nodes: RenderedHierarchyNode[] = pointRoot
       .descendants()
       .filter(node => !node.data.virtualRoot)
-      .map(node => ({
-        side,
-        hierarchyNode: node,
-        x: node.x,
-        y:
-          side === 'n-ptych'
-            ? hierarchyBaseOffset + node.y
-            : -hierarchyBaseOffset - node.y
-      }));
+      .map(node => {
+        const belongsToHotspotH2Group =
+          side === 'hotspot' &&
+          (
+            node.data.viewPathId === this.HOTSPOT_H2_GROUP_PATH ||
+            node.data.viewPathId.startsWith(
+              `${this.HOTSPOT_H2_GROUP_PATH}>`
+            )
+          );
+
+        return {
+          side,
+          hierarchyNode: node,
+          x:
+            node.x +
+            (belongsToHotspotH2Group
+              ? hotspotH2GroupOffset
+              : 0),
+          y:
+            side === 'n-ptych'
+              ? hierarchyBaseOffset + node.y
+              : -hierarchyBaseOffset - node.y
+        };
+      });
 
     const nodeMap = new Map<string, RenderedHierarchyNode>();
 
@@ -1502,6 +1603,24 @@ export class GraphsComponent
       card
         .append('text')
         .attr('x', 0)
+        .attr('y', this.CARD_HEIGHT / 2 - 32)
+        .attr('text-anchor', 'middle')
+        .attr(
+          'font-family',
+          'Roboto, Helvetica Neue, sans-serif'
+        )
+        .attr('font-size', 10.5)
+        .attr('font-weight', 600)
+        .attr('fill', '#4b5563')
+        .text(
+          `Average correlation: ${this
+            .getStructureAverageCorrelation(structure)
+            .toFixed(2)}`
+        );
+
+      card
+        .append('text')
+        .attr('x', 0)
         .attr('y', this.CARD_HEIGHT / 2 - 15)
         .attr('text-anchor', 'middle')
         .attr(
@@ -1703,8 +1822,8 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
     }
 
     const initialRadius = Math.min(
-      Math.min(mainGraphWidth, mainGraphHeight) * 0.52,
-      280 + nodeIds.length * 18
+      Math.min(mainGraphWidth, mainGraphHeight) * 0.68,
+      920 + nodeIds.length * 62
     );
 
     const nodes: MainGraphNode[] = nodeIds.map((id, index) => {
@@ -1738,21 +1857,34 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       correlation: edge.correlation
     }));
 
-    const linkDistance = Math.min(
-      460,
+    const degreeMap = new Map<string, number>();
+
+    nodeIds.forEach(id => degreeMap.set(id, 0));
+
+    normalizedEdges.forEach(edge => {
+      degreeMap.set(
+        edge.source,
+        (degreeMap.get(edge.source) ?? 0) + 1
+      );
+
+      degreeMap.set(
+        edge.target,
+        (degreeMap.get(edge.target) ?? 0) + 1
+      );
+    });
+
+    const averageDegree = nodeIds.length > 0
+      ? (normalizedEdges.length * 2) / nodeIds.length
+      : 0;
+
+    const baseLinkDistance = Math.min(
+      1900,
       Math.max(
-        280,
-        220 + nodeIds.length * 11
+        900,
+        720 +
+          nodeIds.length * 34 +
+          averageDegree * 58
       )
-    );
-
-    const chargeStrength = -(
-      4200 + nodeIds.length * 260
-    );
-
-    const radialTarget = Math.min(
-      Math.min(mainGraphWidth, mainGraphHeight) * 0.36,
-      340 + nodeIds.length * 10
     );
 
     const simulation = d3
@@ -1762,16 +1894,63 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
         d3
           .forceLink<MainGraphNode, MainGraphEdge>(edges)
           .id(node => node.id)
-          .distance(linkDistance)
-          .strength(0.75)
+          .distance(edge => {
+            const sourceId =
+              typeof edge.source === 'string'
+                ? edge.source
+                : edge.source.id;
+
+            const targetId =
+              typeof edge.target === 'string'
+                ? edge.target
+                : edge.target.id;
+
+            const degree = Math.max(
+              degreeMap.get(sourceId) ?? 1,
+              degreeMap.get(targetId) ?? 1
+            );
+
+            return Math.min(
+              2100,
+              baseLinkDistance + degree * 52
+            );
+          })
+          .strength(edge => {
+            const sourceId =
+              typeof edge.source === 'string'
+                ? edge.source
+                : edge.source.id;
+
+            const targetId =
+              typeof edge.target === 'string'
+                ? edge.target
+                : edge.target.id;
+
+            const degree = Math.max(
+              degreeMap.get(sourceId) ?? 1,
+              degreeMap.get(targetId) ?? 1
+            );
+
+            return Math.max(
+              0.012,
+              0.075 / Math.sqrt(Math.max(1, degree))
+            );
+          })
       )
       .force(
         'charge',
-        d3.forceManyBody().strength(chargeStrength)
-      )
-      .force(
-        'center',
-        d3.forceCenter(0, 30)
+        d3
+          .forceManyBody<MainGraphNode>()
+          .strength(node => {
+            const degree = degreeMap.get(node.id) ?? 0;
+
+            return -(
+              42000 +
+              nodeIds.length * 1650 +
+              degree * 6200
+            );
+          })
+          .distanceMax(9000)
       )
       .force(
         'collision',
@@ -1785,24 +1964,19 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
               Math.sqrt(
                 halfWidth * halfWidth +
                 halfHeight * halfHeight
-              ) + 76
+              ) + this.MAIN_GRAPH_COLLISION_PADDING
             );
           })
-          .strength(1.5)
+          .strength(2)
+          .iterations(7)
       )
       .force(
-        'radial',
-        d3
-          .forceRadial(
-            radialTarget,
-            0,
-            34
-          )
-          .strength(0.2)
+        'center',
+        d3.forceCenter<MainGraphNode>(0, 34)
       )
       .stop();
 
-    for (let index = 0; index < 520; index++) {
+    for (let index = 0; index < 2200; index++) {
       simulation.tick();
     }
 
@@ -1812,7 +1986,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
     const availableHeight =
       mainGraphHeight -
       this.MAIN_GRAPH_TOP_PADDING -
-      92;
+      130;
 
     const xValues = nodes.map(node => node.x ?? 0);
     const yValues = nodes.map(node => node.y ?? 0);
@@ -1825,11 +1999,31 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
     const rawWidth = Math.max(1, maxX - minX);
     const rawHeight = Math.max(1, maxY - minY);
 
-    const scale = Math.min(
-      1,
-      availableWidth / rawWidth,
-      availableHeight / rawHeight
+    const maxNodeHeight = Math.max(
+      ...nodes.map(node => node.boxHeight),
+      56
     );
+
+    const horizontalSafety =
+      this.MAIN_GRAPH_NODE_WIDTH / 2 +
+      this.MAIN_GRAPH_EDGE_SAFETY;
+
+    const verticalSafety =
+      maxNodeHeight / 2 +
+      this.MAIN_GRAPH_EDGE_SAFETY;
+
+    const targetWidth = Math.max(
+      1,
+      availableWidth - horizontalSafety * 2
+    );
+
+    const targetHeight = Math.max(
+      1,
+      availableHeight - verticalSafety * 2
+    );
+
+    const scaleX = targetWidth / rawWidth;
+    const scaleY = targetHeight / rawHeight;
 
     const centerX = (minX + maxX) / 2;
     const centerY = (minY + maxY) / 2;
@@ -1841,9 +2035,9 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
 
     nodes.forEach(node => {
       positionMap.set(node.id, {
-        x: ((node.x ?? 0) - centerX) * scale,
+        x: ((node.x ?? 0) - centerX) * scaleX,
         y:
-          ((node.y ?? 0) - centerY) * scale +
+          ((node.y ?? 0) - centerY) * scaleY +
           34
       });
     });
@@ -2776,6 +2970,26 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       .attr('font-size', 11)
       .attr('fill', '#6b7280')
       .text(this.getStructureStats(structure));
+
+    if (structure.key !== '__correlation_graph__') {
+      controls
+        .append('text')
+        .attr('x', width / 2)
+        .attr('y', 73)
+        .attr('text-anchor', 'middle')
+        .attr(
+          'font-family',
+          'Roboto, Helvetica Neue, sans-serif'
+        )
+        .attr('font-size', 11)
+        .attr('font-weight', 600)
+        .attr('fill', '#4b5563')
+        .text(
+          `Average correlation: ${this
+            .getStructureAverageCorrelation(structure)
+            .toFixed(2)}`
+        );
+    }
   }
 
   private fitCombinedToView(
@@ -2964,6 +3178,21 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
     }
 
     return `K${structure.size}`;
+  }
+
+  private getStructureAverageCorrelation(
+    structure: AnalysisStructure
+  ): number {
+    if (structure.edges.length === 0) {
+      return 0;
+    }
+
+    const correlationSum = structure.edges.reduce(
+      (sum, edge) => sum + Math.abs(edge.correlation),
+      0
+    );
+
+    return correlationSum / structure.edges.length;
   }
 
   private getStructureStats(
