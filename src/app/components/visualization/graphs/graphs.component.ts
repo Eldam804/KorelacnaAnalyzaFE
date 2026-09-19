@@ -2814,37 +2814,20 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
         );
     }
 
+    simulation.stop();
+
+    const settleTicks =
+      structure.displayTitle === 'Correlation graph'
+        ? 900
+        : 500;
+
+    for (let index = 0; index < settleTicks; index++) {
+      simulation.tick();
+    }
+
     this.detailSimulation = simulation;
 
-    const dragBehavior = d3
-      .drag<SVGGElement, DetailNode>()
-      .on('start', (event, node) => {
-        if (!event.active) {
-          this.detailSimulation
-            ?.alphaTarget(0.3)
-            .restart();
-        }
-
-        node.fx = node.x;
-        node.fy = node.y;
-      })
-      .on('drag', (event, node) => {
-        node.fx = event.x;
-        node.fy = event.y;
-      })
-      .on('end', (event, node) => {
-        if (!event.active) {
-          this.detailSimulation
-            ?.alphaTarget(0);
-        }
-
-        node.fx = null;
-        node.fy = null;
-      });
-
-    nodeGroups.call(dragBehavior);
-
-    this.detailSimulation.on('tick', () => {
+    const updateDetailPositions = (): void => {
       links
         .attr('x1', edge =>
           (edge.source as DetailNode).x ?? 0
@@ -2888,7 +2871,28 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
             node.y ?? 0
           })`
       );
-    });
+    };
+
+    updateDetailPositions();
+
+    const dragBehavior = d3
+      .drag<SVGGElement, DetailNode>()
+      .on('start', (_event, node) => {
+        node.fx = null;
+        node.fy = null;
+      })
+      .on('drag', (event, node) => {
+        node.x = event.x;
+        node.y = event.y;
+        updateDetailPositions();
+      })
+      .on('end', (_event, node) => {
+        node.fx = null;
+        node.fy = null;
+        updateDetailPositions();
+      });
+
+    nodeGroups.call(dragBehavior);
 
     this.drawDetailControls(
       svg,
