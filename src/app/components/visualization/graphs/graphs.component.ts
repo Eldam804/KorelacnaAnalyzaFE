@@ -172,10 +172,21 @@ export class GraphsComponent
   private readonly MAIN_GRAPH_HORIZONTAL_SPREAD = 620;
   private readonly MAIN_GRAPH_VERTICAL_SPREAD = 520;
   private readonly MAIN_GRAPH_COLLISION_PADDING = 285;
+  private readonly MAIN_GRAPH_FA2_ITERATIONS = 2200;
+  private readonly MAIN_GRAPH_FA2_REPULSION = 72000;
+  private readonly MAIN_GRAPH_FA2_ATTRACTION = 0.016;
+  private readonly MAIN_GRAPH_FA2_EDGE_LENGTH = 520;
+  private readonly MAIN_GRAPH_FA2_GRAVITY = 0.0011;
+  private readonly MAIN_GRAPH_FA2_INITIAL_STEP = 42;
+  private readonly MAIN_GRAPH_FA2_FINAL_STEP = 2.5;
+  private readonly MAIN_GRAPH_UNIFORM_SPREAD_PASSES = 260;
+  private readonly MAIN_GRAPH_UNIFORM_SPREAD_FACTOR = 0.92;
+  private readonly MAIN_GRAPH_RECTANGLE_PADDING = 34;
+  private readonly MAIN_GRAPH_FINAL_FILL = 0.985;
   private readonly MAIN_GRAPH_BOX_SCALE = 0.88;
   private readonly MAIN_GRAPH_EDGE_SAFETY = 58;
   private readonly GRAPH_BRANCH_GAP = 120;
-  private readonly DETAIL_NODE_WIDTH = 190;
+  private readonly DETAIL_NODE_WIDTH = 170;
   private readonly ATTRIBUTE_LINE_LENGTH = 15;
 
   private nPtychState: HierarchyDatasetState =
@@ -201,6 +212,10 @@ export class GraphsComponent
   private detailTransform: d3.ZoomTransform = d3.zoomIdentity;
   private detailSimulation?: d3.Simulation<DetailNode, DetailEdge>;
   private clickTimer: number | null = null;
+  private mainGraphPositionCache = new Map<
+    string,
+    { x: number; y: number }
+  >();
 
   get hasActiveData(): boolean {
     return this.getGraphNodeIds().length > 0;
@@ -1821,42 +1836,6 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       return;
     }
 
-    const initialRadius = Math.min(
-      Math.min(mainGraphWidth, mainGraphHeight) * 0.68,
-      920 + nodeIds.length * 62
-    );
-
-    const nodes: MainGraphNode[] = nodeIds.map((id, index) => {
-      const lines = this.wrapAttributeLabel(
-        id,
-        this.ATTRIBUTE_LINE_LENGTH
-      );
-
-      const boxHeight = Math.max(
-        56,
-        26 + lines.length * 18
-      );
-
-      const angle =
-        (2 * Math.PI * index) /
-        Math.max(1, nodeIds.length) -
-        Math.PI / 2;
-
-      return {
-        id,
-        lines,
-        boxHeight,
-        x: Math.cos(angle) * initialRadius,
-        y: Math.sin(angle) * initialRadius
-      };
-    });
-
-    const edges: MainGraphEdge[] = normalizedEdges.map(edge => ({
-      source: edge.source,
-      target: edge.target,
-      correlation: edge.correlation
-    }));
-
     const degreeMap = new Map<string, number>();
 
     nodeIds.forEach(id => degreeMap.set(id, 0));
@@ -1873,131 +1852,275 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       );
     });
 
-    const averageDegree = nodeIds.length > 0
-      ? (normalizedEdges.length * 2) / nodeIds.length
-      : 0;
-
-    const baseLinkDistance = Math.min(
-      1900,
+    const initialRadius = Math.min(
+      1700,
       Math.max(
-        900,
-        720 +
-          nodeIds.length * 34 +
-          averageDegree * 58
+        760,
+        Math.sqrt(Math.max(1, nodeIds.length)) * 220
       )
     );
 
-    const simulation = d3
-      .forceSimulation<MainGraphNode>(nodes)
-      .force(
-        'link',
-        d3
-          .forceLink<MainGraphNode, MainGraphEdge>(edges)
-          .id(node => node.id)
-          .distance(edge => {
-            const sourceId =
-              typeof edge.source === 'string'
-                ? edge.source
-                : edge.source.id;
+    const goldenAngle =
+      Math.PI * (3 - Math.sqrt(5));
 
-            const targetId =
-              typeof edge.target === 'string'
-                ? edge.target
-                : edge.target.id;
+    const nodes: MainGraphNode[] = nodeIds.map((id, index) => {
+      const lines = this.wrapAttributeLabel(
+        id,
+        this.ATTRIBUTE_LINE_LENGTH
+      );
 
-            const degree = Math.max(
-              degreeMap.get(sourceId) ?? 1,
-              degreeMap.get(targetId) ?? 1
-            );
+      const boxHeight = Math.max(
+        56,
+        26 + lines.length * 18
+      );
 
-            return Math.min(
-              2100,
-              baseLinkDistance + degree * 52
-            );
-          })
-          .strength(edge => {
-            const sourceId =
-              typeof edge.source === 'string'
-                ? edge.source
-                : edge.source.id;
+      const normalizedRadius =
+        Math.sqrt(
+          (index + 0.5) /
+          Math.max(1, nodeIds.length)
+        );
 
-            const targetId =
-              typeof edge.target === 'string'
-                ? edge.target
-                : edge.target.id;
+      const angle =
+        index * goldenAngle -
+        Math.PI / 2;
 
-            const degree = Math.max(
-              degreeMap.get(sourceId) ?? 1,
-              degreeMap.get(targetId) ?? 1
-            );
+      return {
+        id,
+        lines,
+        boxHeight,
+        x:
+          Math.cos(angle) *
+          initialRadius *
+          normalizedRadius,
+        y:
+          Math.sin(angle) *
+          initialRadius *
+          normalizedRadius
+      };
+    });
 
-            return Math.max(
-              0.012,
-              0.075 / Math.sqrt(Math.max(1, degree))
-            );
-          })
-      )
-      .force(
-        'charge',
-        d3
-          .forceManyBody<MainGraphNode>()
-          .strength(node => {
-            const degree = degreeMap.get(node.id) ?? 0;
+    const nodeIndex = new Map<string, number>();
 
-            return -(
-              42000 +
-              nodeIds.length * 1650 +
-              degree * 6200
-            );
-          })
-          .distanceMax(9000)
-      )
-      .force(
-        'collision',
-        d3
-          .forceCollide<MainGraphNode>()
-          .radius(node => {
-            const halfWidth = this.MAIN_GRAPH_NODE_WIDTH / 2;
-            const halfHeight = node.boxHeight / 2;
+    nodes.forEach((node, index) => {
+      nodeIndex.set(node.id, index);
+    });
 
-            return (
-              Math.sqrt(
-                halfWidth * halfWidth +
-                halfHeight * halfHeight
-              ) + this.MAIN_GRAPH_COLLISION_PADDING
-            );
-          })
-          .strength(2)
-          .iterations(7)
-      )
-      .force(
-        'center',
-        d3.forceCenter<MainGraphNode>(0, 34)
-      )
-      .stop();
+    const displacementX =
+      new Array<number>(nodes.length).fill(0);
 
-    for (let index = 0; index < 2200; index++) {
-      simulation.tick();
+    const displacementY =
+      new Array<number>(nodes.length).fill(0);
+
+    for (
+      let iteration = 0;
+      iteration < this.MAIN_GRAPH_FA2_ITERATIONS;
+      iteration++
+    ) {
+      displacementX.fill(0);
+      displacementY.fill(0);
+
+      for (
+        let left = 0;
+        left < nodes.length;
+        left++
+      ) {
+        const leftNode = nodes[left];
+
+        for (
+          let right = left + 1;
+          right < nodes.length;
+          right++
+        ) {
+          const rightNode = nodes[right];
+
+          let dx =
+            (leftNode.x ?? 0) -
+            (rightNode.x ?? 0);
+
+          let dy =
+            (leftNode.y ?? 0) -
+            (rightNode.y ?? 0);
+
+          let distanceSquared =
+            dx * dx + dy * dy;
+
+          if (distanceSquared < 1) {
+            const angle =
+              (
+                (left + 1) * 2.399963229728653 +
+                (right + 1) * 0.618033988749895
+              ) %
+              (Math.PI * 2);
+
+            dx = Math.cos(angle);
+            dy = Math.sin(angle);
+            distanceSquared = 1;
+          }
+
+          const repulsion =
+            this.MAIN_GRAPH_FA2_REPULSION /
+            distanceSquared;
+
+          displacementX[left] +=
+            dx * repulsion;
+
+          displacementY[left] +=
+            dy * repulsion;
+
+          displacementX[right] -=
+            dx * repulsion;
+
+          displacementY[right] -=
+            dy * repulsion;
+        }
+      }
+
+      normalizedEdges.forEach(edge => {
+        const sourceIndex =
+          nodeIndex.get(edge.source);
+
+        const targetIndex =
+          nodeIndex.get(edge.target);
+
+        if (
+          sourceIndex === undefined ||
+          targetIndex === undefined
+        ) {
+          return;
+        }
+
+        const source = nodes[sourceIndex];
+        const target = nodes[targetIndex];
+
+        const dx =
+          (target.x ?? 0) -
+          (source.x ?? 0);
+
+        const dy =
+          (target.y ?? 0) -
+          (source.y ?? 0);
+
+        const distance = Math.max(
+          1,
+          Math.sqrt(dx * dx + dy * dy)
+        );
+
+        const excessDistance =
+          distance -
+          this.MAIN_GRAPH_FA2_EDGE_LENGTH;
+
+        if (excessDistance <= 0) {
+          return;
+        }
+
+        const sourceDegree =
+          Math.max(
+            1,
+            degreeMap.get(edge.source) ?? 1
+          );
+
+        const targetDegree =
+          Math.max(
+            1,
+            degreeMap.get(edge.target) ?? 1
+          );
+
+        const sourceAttraction =
+          (
+            excessDistance *
+            this.MAIN_GRAPH_FA2_ATTRACTION
+          ) /
+          sourceDegree;
+
+        const targetAttraction =
+          (
+            excessDistance *
+            this.MAIN_GRAPH_FA2_ATTRACTION
+          ) /
+          targetDegree;
+
+        const nx = dx / distance;
+        const ny = dy / distance;
+
+        displacementX[sourceIndex] +=
+          nx * sourceAttraction;
+
+        displacementY[sourceIndex] +=
+          ny * sourceAttraction;
+
+        displacementX[targetIndex] -=
+          nx * targetAttraction;
+
+        displacementY[targetIndex] -=
+          ny * targetAttraction;
+      });
+
+      nodes.forEach((node, index) => {
+        displacementX[index] -=
+          (node.x ?? 0) *
+          this.MAIN_GRAPH_FA2_GRAVITY;
+
+        displacementY[index] -=
+          (node.y ?? 0) *
+          this.MAIN_GRAPH_FA2_GRAVITY;
+      });
+
+      const progress =
+        iteration /
+        Math.max(
+          1,
+          this.MAIN_GRAPH_FA2_ITERATIONS - 1
+        );
+
+      const maxStep =
+        this.MAIN_GRAPH_FA2_FINAL_STEP +
+        (
+          this.MAIN_GRAPH_FA2_INITIAL_STEP -
+          this.MAIN_GRAPH_FA2_FINAL_STEP
+        ) *
+        Math.pow(
+          1 - progress,
+          1.8
+        );
+
+      nodes.forEach((node, index) => {
+        const dx = displacementX[index];
+        const dy = displacementY[index];
+
+        const length =
+          Math.sqrt(dx * dx + dy * dy);
+
+        if (
+          !Number.isFinite(length) ||
+          length <= 0
+        ) {
+          return;
+        }
+
+        const step =
+          Math.min(
+            maxStep,
+            length
+          );
+
+        node.x =
+          (node.x ?? 0) +
+          (dx / length) * step;
+
+        node.y =
+          (node.y ?? 0) +
+          (dy / length) * step;
+      });
     }
 
     const availableWidth =
-      mainGraphWidth - this.MAIN_GRAPH_SIDE_PADDING * 2;
+      mainGraphWidth -
+      this.MAIN_GRAPH_SIDE_PADDING * 2;
 
     const availableHeight =
       mainGraphHeight -
       this.MAIN_GRAPH_TOP_PADDING -
       130;
-
-    const xValues = nodes.map(node => node.x ?? 0);
-    const yValues = nodes.map(node => node.y ?? 0);
-
-    const minX = Math.min(...xValues, -1);
-    const maxX = Math.max(...xValues, 1);
-    const minY = Math.min(...yValues, -1);
-    const maxY = Math.max(...yValues, 1);
-
-    const rawWidth = Math.max(1, maxX - minX);
-    const rawHeight = Math.max(1, maxY - minY);
 
     const maxNodeHeight = Math.max(
       ...nodes.map(node => node.boxHeight),
@@ -2006,27 +2129,47 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
 
     const horizontalSafety =
       this.MAIN_GRAPH_NODE_WIDTH / 2 +
-      this.MAIN_GRAPH_EDGE_SAFETY;
+      this.MAIN_GRAPH_EDGE_SAFETY * 0.45;
 
     const verticalSafety =
       maxNodeHeight / 2 +
-      this.MAIN_GRAPH_EDGE_SAFETY;
+      this.MAIN_GRAPH_EDGE_SAFETY * 0.45;
 
     const targetWidth = Math.max(
       1,
-      availableWidth - horizontalSafety * 2
+      availableWidth -
+      horizontalSafety * 2
     );
 
     const targetHeight = Math.max(
       1,
-      availableHeight - verticalSafety * 2
+      availableHeight -
+      verticalSafety * 2
     );
 
-    const scaleX = targetWidth / rawWidth;
-    const scaleY = targetHeight / rawHeight;
+    const getBounds = (
+      positions: Map<
+        string,
+        { x: number; y: number }
+      >
+    ) => {
+      const xs = Array.from(
+        positions.values(),
+        position => position.x
+      );
 
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
+      const ys = Array.from(
+        positions.values(),
+        position => position.y
+      );
+
+      return {
+        minX: Math.min(...xs, -1),
+        maxX: Math.max(...xs, 1),
+        minY: Math.min(...ys, -1),
+        maxY: Math.max(...ys, 1)
+      };
+    };
 
     const positionMap = new Map<
       string,
@@ -2035,12 +2178,353 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
 
     nodes.forEach(node => {
       positionMap.set(node.id, {
-        x: ((node.x ?? 0) - centerX) * scaleX,
-        y:
-          ((node.y ?? 0) - centerY) * scaleY +
-          34
+        x: node.x ?? 0,
+        y: node.y ?? 0
       });
     });
+
+    const scalePositionsToBox = (
+      fill: number
+    ): void => {
+      const bounds =
+        getBounds(positionMap);
+
+      const rawWidth = Math.max(
+        1,
+        bounds.maxX - bounds.minX
+      );
+
+      const rawHeight = Math.max(
+        1,
+        bounds.maxY - bounds.minY
+      );
+
+      const scaleX =
+        (
+          targetWidth *
+          fill
+        ) /
+        rawWidth;
+
+      const scaleY =
+        (
+          targetHeight *
+          fill
+        ) /
+        rawHeight;
+
+      const centerX =
+        (
+          bounds.minX +
+          bounds.maxX
+        ) /
+        2;
+
+      const centerY =
+        (
+          bounds.minY +
+          bounds.maxY
+        ) /
+        2;
+
+      positionMap.forEach(position => {
+        position.x =
+          (
+            position.x -
+            centerX
+          ) *
+          scaleX;
+
+        position.y =
+          (
+            position.y -
+            centerY
+          ) *
+          scaleY +
+          34;
+      });
+    };
+
+    scalePositionsToBox(
+      this.MAIN_GRAPH_FINAL_FILL
+    );
+
+    const targetArea =
+      targetWidth *
+      targetHeight;
+
+    const preferredSpacing =
+      Math.max(
+        this.MAIN_GRAPH_NODE_WIDTH * 1.55,
+        Math.sqrt(
+          targetArea /
+          Math.max(1, nodes.length)
+        ) *
+        this.MAIN_GRAPH_UNIFORM_SPREAD_FACTOR
+      );
+
+    for (
+      let pass = 0;
+      pass < this.MAIN_GRAPH_UNIFORM_SPREAD_PASSES;
+      pass++
+    ) {
+      const moveX =
+        new Array<number>(nodes.length).fill(0);
+
+      const moveY =
+        new Array<number>(nodes.length).fill(0);
+
+      let anyMovement = false;
+
+      for (
+        let left = 0;
+        left < nodes.length;
+        left++
+      ) {
+        const leftPosition =
+          positionMap.get(nodes[left].id);
+
+        if (!leftPosition) {
+          continue;
+        }
+
+        for (
+          let right = left + 1;
+          right < nodes.length;
+          right++
+        ) {
+          const rightPosition =
+            positionMap.get(nodes[right].id);
+
+          if (!rightPosition) {
+            continue;
+          }
+
+          let dx =
+            rightPosition.x -
+            leftPosition.x;
+
+          let dy =
+            rightPosition.y -
+            leftPosition.y;
+
+          let distance =
+            Math.sqrt(dx * dx + dy * dy);
+
+          if (distance < 0.001) {
+            const angle =
+              (
+                (left + 1) *
+                2.399963229728653 +
+                right
+              ) %
+              (Math.PI * 2);
+
+            dx = Math.cos(angle);
+            dy = Math.sin(angle);
+            distance = 1;
+          }
+
+          if (
+            distance >= preferredSpacing
+          ) {
+            continue;
+          }
+
+          anyMovement = true;
+
+          const push =
+            (
+              preferredSpacing -
+              distance
+            ) *
+            0.085;
+
+          const nx = dx / distance;
+          const ny = dy / distance;
+
+          moveX[left] -= nx * push;
+          moveY[left] -= ny * push;
+
+          moveX[right] += nx * push;
+          moveY[right] += ny * push;
+        }
+      }
+
+      if (!anyMovement) {
+        break;
+      }
+
+      const passProgress =
+        pass /
+        Math.max(
+          1,
+          this.MAIN_GRAPH_UNIFORM_SPREAD_PASSES - 1
+        );
+
+      const damping =
+        0.9 -
+        passProgress * 0.45;
+
+      nodes.forEach((node, index) => {
+        const position =
+          positionMap.get(node.id);
+
+        if (!position) {
+          return;
+        }
+
+        position.x +=
+          moveX[index] *
+          damping;
+
+        position.y +=
+          moveY[index] *
+          damping;
+      });
+
+      if (
+        pass > 0 &&
+        pass % 30 === 0
+      ) {
+        scalePositionsToBox(
+          this.MAIN_GRAPH_FINAL_FILL
+        );
+      }
+    }
+
+    for (let pass = 0; pass < 120; pass++) {
+      let changed = false;
+
+      for (
+        let left = 0;
+        left < nodes.length;
+        left++
+      ) {
+        const leftNode = nodes[left];
+        const leftPosition =
+          positionMap.get(leftNode.id);
+
+        if (!leftPosition) {
+          continue;
+        }
+
+        for (
+          let right = left + 1;
+          right < nodes.length;
+          right++
+        ) {
+          const rightNode = nodes[right];
+          const rightPosition =
+            positionMap.get(rightNode.id);
+
+          if (!rightPosition) {
+            continue;
+          }
+
+          const requiredX =
+            this.MAIN_GRAPH_NODE_WIDTH +
+            this.MAIN_GRAPH_RECTANGLE_PADDING;
+
+          const requiredY =
+            (
+              leftNode.boxHeight +
+              rightNode.boxHeight
+            ) /
+            2 +
+            this.MAIN_GRAPH_RECTANGLE_PADDING;
+
+          let dx =
+            rightPosition.x -
+            leftPosition.x;
+
+          let dy =
+            rightPosition.y -
+            leftPosition.y;
+
+          const overlapX =
+            requiredX -
+            Math.abs(dx);
+
+          const overlapY =
+            requiredY -
+            Math.abs(dy);
+
+          if (
+            overlapX <= 0 ||
+            overlapY <= 0
+          ) {
+            continue;
+          }
+
+          changed = true;
+
+          if (
+            Math.abs(dx) < 0.001 &&
+            Math.abs(dy) < 0.001
+          ) {
+            const angle =
+              (
+                (left + 1) *
+                2.399963229728653 +
+                right
+              ) %
+              (Math.PI * 2);
+
+            dx = Math.cos(angle);
+            dy = Math.sin(angle);
+          }
+
+          if (overlapX < overlapY) {
+            const direction =
+              dx >= 0 ? 1 : -1;
+
+            const shift =
+              overlapX / 2 + 0.5;
+
+            leftPosition.x -=
+              direction * shift;
+
+            rightPosition.x +=
+              direction * shift;
+          }
+          else {
+            const direction =
+              dy >= 0 ? 1 : -1;
+
+            const shift =
+              overlapY / 2 + 0.5;
+
+            leftPosition.y -=
+              direction * shift;
+
+            rightPosition.y +=
+              direction * shift;
+          }
+        }
+      }
+
+      if (!changed) {
+        break;
+      }
+    }
+
+    scalePositionsToBox(
+      this.MAIN_GRAPH_FINAL_FILL
+    );
+
+    this.mainGraphPositionCache = new Map(
+      Array.from(
+        positionMap.entries(),
+        ([id, position]) => [
+          id,
+          {
+            x: position.x,
+            y: position.y
+          }
+        ]
+      )
+    );
 
     const graphBody = group
       .append('g')
@@ -2407,6 +2891,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
     }
 
     this.detailSimulation?.stop();
+    this.detailSimulation = undefined;
 
     const container =
       this.graphContainerRef.nativeElement;
@@ -2417,6 +2902,9 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
     if (width <= 0 || height <= 0) {
       return;
     }
+
+    const isMainCorrelationGraph =
+      structure.key === '__correlation_graph__';
 
     if (resetView) {
       this.detailTransform = d3.zoomIdentity;
@@ -2433,6 +2921,11 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
     const centerX = width / 2;
     const centerY = height / 2;
 
+    const detailNodeWidth =
+      isMainCorrelationGraph
+        ? this.MAIN_GRAPH_NODE_WIDTH
+        : 190;
+
     const nodes: DetailNode[] =
       structure.members.map((member, index) => {
         const lines = this.wrapAttributeLabel(
@@ -2440,10 +2933,51 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
           this.ATTRIBUTE_LINE_LENGTH
         );
 
-        const boxHeight = Math.max(
-          64,
-          30 + lines.length * 18
-        );
+        const boxHeight =
+          isMainCorrelationGraph
+            ? Math.max(
+                56,
+                26 + lines.length * 18
+              )
+            : Math.max(
+                64,
+                30 + lines.length * 18
+              );
+
+        if (isMainCorrelationGraph) {
+          const cached =
+            this.mainGraphPositionCache.get(member);
+
+          if (cached) {
+            return {
+              id: member,
+              lines,
+              boxHeight,
+              x: cached.x,
+              y: cached.y,
+              isCenter: false
+            };
+          }
+
+          const fallbackRadius = Math.max(
+            240,
+            structure.size * 36
+          );
+
+          const angle =
+            (2 * Math.PI * index) /
+            Math.max(1, structure.members.length) -
+            Math.PI / 2;
+
+          return {
+            id: member,
+            lines,
+            boxHeight,
+            x: Math.cos(angle) * fallbackRadius,
+            y: Math.sin(angle) * fallbackRadius,
+            isCenter: false
+          };
+        }
 
         if (structure.kind === 'hotspot') {
           const centerId = structure.centerId;
@@ -2475,7 +3009,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
 
           const angle =
             (2 * Math.PI * leafIndex) /
-            leaves.length -
+            Math.max(1, leaves.length) -
             Math.PI / 2;
 
           const x =
@@ -2505,7 +3039,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
 
         const angle =
           (2 * Math.PI * index) /
-          structure.members.length -
+          Math.max(1, structure.members.length) -
           Math.PI / 2;
 
         return {
@@ -2527,6 +3061,233 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
         target: edge.target,
         correlation: edge.correlation
       }));
+
+    if (!isMainCorrelationGraph) {
+      const simulation = d3
+        .forceSimulation<DetailNode>(nodes)
+        .force(
+          'link',
+          d3
+            .forceLink<DetailNode, DetailEdge>(edges)
+            .id(node => node.id)
+            .distance(
+              structure.kind === 'hotspot'
+                ? 230
+                : 240
+            )
+            .strength(
+              structure.kind === 'hotspot'
+                ? 0.9
+                : 0.6
+            )
+        )
+        .force(
+          'charge',
+          d3
+            .forceManyBody<DetailNode>()
+            .strength(
+              structure.kind === 'hotspot'
+                ? -500
+                : -900
+            )
+        )
+        .force(
+          'collision',
+          d3
+            .forceCollide<DetailNode>()
+            .radius(node => {
+              const halfWidth =
+                detailNodeWidth / 2;
+
+              const halfHeight =
+                node.boxHeight / 2;
+
+              return (
+                Math.sqrt(
+                  halfWidth * halfWidth +
+                  halfHeight * halfHeight
+                ) +
+                25
+              );
+            })
+        );
+
+      if (structure.kind === 'hotspot') {
+        simulation
+          .force(
+            'x',
+            d3
+              .forceX<DetailNode>(
+                node => node.targetX ?? centerX
+              )
+              .strength(node =>
+                node.isCenter
+                  ? 0.6
+                  : 0.24
+              )
+          )
+          .force(
+            'y',
+            d3
+              .forceY<DetailNode>(
+                node => node.targetY ?? centerY
+              )
+              .strength(node =>
+                node.isCenter
+                  ? 0.6
+                  : 0.24
+              )
+          );
+      }
+      else {
+        simulation
+          .force(
+            'center',
+            d3.forceCenter<DetailNode>(
+              centerX,
+              centerY
+            )
+          )
+          .force(
+            'x',
+            d3
+              .forceX<DetailNode>(centerX)
+              .strength(0.035)
+          )
+          .force(
+            'y',
+            d3
+              .forceY<DetailNode>(centerY)
+              .strength(0.035)
+          );
+      }
+
+      simulation.stop();
+
+      for (let index = 0; index < 500; index++) {
+        simulation.tick();
+      }
+
+      this.detailSimulation = simulation;
+    }
+
+    const nodeMap =
+      new Map<string, DetailNode>();
+
+    nodes.forEach(node => {
+      nodeMap.set(node.id, node);
+    });
+
+    edges.forEach(edge => {
+      const sourceId =
+        typeof edge.source === 'string'
+          ? edge.source
+          : edge.source.id;
+
+      const targetId =
+        typeof edge.target === 'string'
+          ? edge.target
+          : edge.target.id;
+
+      const sourceNode =
+        nodeMap.get(sourceId);
+
+      const targetNode =
+        nodeMap.get(targetId);
+
+      if (sourceNode) {
+        edge.source = sourceNode;
+      }
+
+      if (targetNode) {
+        edge.target = targetNode;
+      }
+    });
+
+    if (isMainCorrelationGraph && resetView) {
+      const minX = Math.min(
+        ...nodes.map(node =>
+          (node.x ?? 0) -
+          detailNodeWidth / 2
+        )
+      );
+
+      const maxX = Math.max(
+        ...nodes.map(node =>
+          (node.x ?? 0) +
+          detailNodeWidth / 2
+        )
+      );
+
+      const minY = Math.min(
+        ...nodes.map(node =>
+          (node.y ?? 0) -
+          node.boxHeight / 2
+        )
+      );
+
+      const maxY = Math.max(
+        ...nodes.map(node =>
+          (node.y ?? 0) +
+          node.boxHeight / 2
+        )
+      );
+
+      const graphWidth = Math.max(
+        1,
+        maxX - minX
+      );
+
+      const graphHeight = Math.max(
+        1,
+        maxY - minY
+      );
+
+      const horizontalPadding = Math.max(
+        70,
+        width * 0.06
+      );
+
+      const topPadding = 100;
+      const bottomPadding = 58;
+
+      const availableWidth = Math.max(
+        1,
+        width - horizontalPadding * 2
+      );
+
+      const availableHeight = Math.max(
+        1,
+        height - topPadding - bottomPadding
+      );
+
+      const scale = Math.min(
+        availableWidth / graphWidth,
+        availableHeight / graphHeight
+      );
+
+      const graphCenterX =
+        (minX + maxX) / 2;
+
+      const graphCenterY =
+        (minY + maxY) / 2;
+
+      const targetCenterX = width / 2;
+
+      const targetCenterY =
+        topPadding +
+        availableHeight / 2;
+
+      this.detailTransform =
+        d3.zoomIdentity
+          .translate(
+            targetCenterX -
+            graphCenterX * scale,
+            targetCenterY -
+            graphCenterY * scale
+          )
+          .scale(scale);
+    }
 
     const world = svg
       .append('g')
@@ -2550,7 +3311,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
 
     const zoomBehavior = d3
       .zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.2, 6])
+      .scaleExtent([0.1, 6])
       .filter((event: any) => {
         const target = event.target as Element | null;
 
@@ -2590,14 +3351,38 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
           : '#d45f5f'
       )
       .attr('stroke-width', edge =>
-        2 + Math.abs(edge.correlation) * 2
+        isMainCorrelationGraph
+          ? 2.2 + Math.abs(edge.correlation) * 3.8
+          : 2 + Math.abs(edge.correlation) * 2
       )
-      .attr('stroke-opacity', 0.72);
+      .attr(
+        'stroke-opacity',
+        isMainCorrelationGraph
+          ? 0.86
+          : 0.72
+      );
 
     const edgeLabels = labelsGroup
-      .selectAll<SVGTextElement, DetailEdge>('text')
+      .selectAll<SVGGElement, DetailEdge>(
+        'g.edge-label'
+      )
       .data(edges)
       .enter()
+      .append('g')
+      .attr('class', 'edge-label');
+
+    edgeLabels
+      .append('rect')
+      .attr('x', -20)
+      .attr('y', -9)
+      .attr('width', 40)
+      .attr('height', 18)
+      .attr('rx', 6)
+      .attr('fill', '#ffffff')
+      .attr('stroke', '#e5e7eb')
+      .attr('stroke-width', 1);
+
+    edgeLabels
       .append('text')
       .attr('text-anchor', 'middle')
       .attr('dominant-baseline', 'central')
@@ -2605,13 +3390,13 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
         'font-family',
         'JetBrains Mono, Consolas, monospace'
       )
-      .attr('font-size', 11)
-      .attr('font-weight', 600)
-      .attr('fill', '#4b5563')
-      .attr('paint-order', 'stroke')
-      .attr('stroke', '#ffffff')
-      .attr('stroke-width', 5)
-      .attr('stroke-linejoin', 'round')
+      .attr('font-size', 10.5)
+      .attr('font-weight', 700)
+      .attr('fill', edge =>
+        edge.correlation >= 0
+          ? '#3143b7'
+          : '#b63b3b'
+      )
       .text(edge =>
         edge.correlation.toFixed(2)
       );
@@ -2630,12 +3415,12 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       .append('rect')
       .attr(
         'x',
-        -this.DETAIL_NODE_WIDTH / 2 + 3
+        -detailNodeWidth / 2 + 3
       )
       .attr('y', node =>
         -node.boxHeight / 2 + 4
       )
-      .attr('width', this.DETAIL_NODE_WIDTH)
+      .attr('width', detailNodeWidth)
       .attr('height', node => node.boxHeight)
       .attr('rx', 10)
       .attr('fill', 'rgba(0,0,0,0.08)');
@@ -2644,12 +3429,12 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       .append('rect')
       .attr(
         'x',
-        -this.DETAIL_NODE_WIDTH / 2
+        -detailNodeWidth / 2
       )
       .attr('y', node =>
         -node.boxHeight / 2
       )
-      .attr('width', this.DETAIL_NODE_WIDTH)
+      .attr('width', detailNodeWidth)
       .attr('height', node => node.boxHeight)
       .attr('rx', 10)
       .attr('fill', node =>
@@ -2660,12 +3445,18 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       .attr('stroke', node =>
         node.isCenter
           ? '#7c3aed'
-          : '#6574d9'
+          : isMainCorrelationGraph
+            ? '#3f51b5'
+            : '#6574d9'
       )
-      .attr('stroke-width', node =>
-        node.isCenter
-          ? 3
-          : 2.5
+      .attr(
+        'stroke-width',
+        node =>
+          node.isCenter
+            ? 3
+            : isMainCorrelationGraph
+              ? 2.4
+              : 2.5
       );
 
     nodeGroups.each((node, index, elements) => {
@@ -2673,14 +3464,19 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
         elements[index] as SVGGElement
       );
 
-      const text = group
+      const nodeText = group
         .append('text')
         .attr('text-anchor', 'middle')
         .attr(
           'font-family',
           'Roboto, Helvetica Neue, sans-serif'
         )
-        .attr('font-size', 13)
+        .attr(
+          'font-size',
+          isMainCorrelationGraph
+            ? 12.5
+            : 13
+        )
         .attr('font-weight', 600)
         .attr('fill', '#1f2937');
 
@@ -2689,7 +3485,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
         (node.lines.length - 1) * lineHeight;
 
       node.lines.forEach((line, lineIndex) => {
-        text
+        nodeText
           .append('tspan')
           .attr('x', 0)
           .attr(
@@ -2701,131 +3497,6 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
           .text(line);
       });
     });
-
-    const simulation = d3
-      .forceSimulation<DetailNode>(nodes)
-      .force(
-        'link',
-        d3
-          .forceLink<DetailNode, DetailEdge>(edges)
-          .id(node => node.id)
-          .distance(
-            structure.kind === 'hotspot'
-              ? 230
-              : structure.displayTitle === 'Correlation graph'
-                ? 320
-                : 240
-          )
-          .strength(
-            structure.kind === 'hotspot'
-              ? 0.9
-              : structure.displayTitle === 'Correlation graph'
-                ? 0.42
-                : 0.6
-          )
-      )
-      .force(
-        'charge',
-        d3
-          .forceManyBody()
-          .strength(
-            structure.kind === 'hotspot'
-              ? -500
-              : structure.displayTitle === 'Correlation graph'
-                ? -1800
-                : -900
-          )
-      )
-      .force(
-        'collision',
-        d3
-          .forceCollide<DetailNode>()
-          .radius(node => {
-            const halfWidth =
-              this.DETAIL_NODE_WIDTH / 2;
-
-            const halfHeight =
-              node.boxHeight / 2;
-
-            return (
-              Math.sqrt(
-                halfWidth * halfWidth +
-                halfHeight * halfHeight
-              ) +
-              (structure.displayTitle === 'Correlation graph'
-                ? 52
-                : 25)
-            );
-          })
-      );
-
-    if (structure.kind === 'hotspot') {
-      simulation
-        .force(
-          'x',
-          d3
-            .forceX<DetailNode>(
-              node => node.targetX ?? centerX
-            )
-            .strength(node =>
-              node.isCenter
-                ? 0.6
-                : 0.24
-            )
-        )
-        .force(
-          'y',
-          d3
-            .forceY<DetailNode>(
-              node => node.targetY ?? centerY
-            )
-            .strength(node =>
-              node.isCenter
-                ? 0.6
-                : 0.24
-            )
-        );
-    }
-    else {
-      simulation
-        .force(
-          'center',
-          d3.forceCenter(centerX, centerY)
-        )
-        .force(
-          'x',
-          d3
-            .forceX<DetailNode>(centerX)
-            .strength(
-              structure.displayTitle === 'Correlation graph'
-                ? 0.018
-                : 0.035
-            )
-        )
-        .force(
-          'y',
-          d3
-            .forceY<DetailNode>(centerY)
-            .strength(
-              structure.displayTitle === 'Correlation graph'
-                ? 0.018
-                : 0.035
-            )
-        );
-    }
-
-    simulation.stop();
-
-    const settleTicks =
-      structure.displayTitle === 'Correlation graph'
-        ? 900
-        : 500;
-
-    for (let index = 0; index < settleTicks; index++) {
-      simulation.tick();
-    }
-
-    this.detailSimulation = simulation;
 
     const updateDetailPositions = (): void => {
       links
@@ -2843,25 +3514,29 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
         );
 
       edgeLabels
-        .attr('x', edge => {
-          const source = edge.source as DetailNode;
-          const target = edge.target as DetailNode;
+        .attr('transform', edge => {
+          const source =
+            edge.source as DetailNode;
 
-          return (
-            ((source.x ?? 0) +
-            (target.x ?? 0)) /
-            2
-          );
-        })
-        .attr('y', edge => {
-          const source = edge.source as DetailNode;
-          const target = edge.target as DetailNode;
+          const target =
+            edge.target as DetailNode;
 
-          return (
-            ((source.y ?? 0) +
-            (target.y ?? 0)) /
-            2
-          );
+          const x =
+            (
+              (source.x ?? 0) +
+              (target.x ?? 0)
+            ) /
+            2;
+
+          const y =
+            (
+              (source.y ?? 0) +
+              (target.y ?? 0)
+            ) /
+            2 -
+            10;
+
+          return `translate(${x}, ${y})`;
         });
 
       nodeGroups.attr(
