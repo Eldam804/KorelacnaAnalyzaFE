@@ -1,0 +1,52 @@
+{
+  "name": "correlation-monoliths-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Desktop wrapper for Correlation Monoliths",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "latest"
+  },
+  "build": {
+    "appId": "com.correlationmonoliths.desktop",
+    "productName": "Correlation Monoliths",
+    "asar": true,
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "frontend",
+        "to": "frontend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "backend/correlation-backend.exe",
+        "to": "backend/correlation-backend.exe"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Correlation-Monoliths-${version}-portable.${ext}"
+    }
+  }
+}

@@ -104,6 +104,7 @@ interface HierarchyRenderData {
 interface DetailNode extends d3.SimulationNodeDatum {
   id: string;
   lines: string[];
+  boxWidth: number;
   boxHeight: number;
   targetX?: number;
   targetY?: number;
@@ -119,6 +120,7 @@ interface DetailEdge extends d3.SimulationLinkDatum<DetailNode> {
 interface MainGraphNode extends d3.SimulationNodeDatum {
   id: string;
   lines: string[];
+  boxWidth: number;
   boxHeight: number;
 }
 
@@ -186,8 +188,12 @@ export class GraphsComponent
   private readonly MAIN_GRAPH_BOX_SCALE = 0.88;
   private readonly MAIN_GRAPH_EDGE_SAFETY = 58;
   private readonly GRAPH_BRANCH_GAP = 120;
-  private readonly DETAIL_NODE_WIDTH = 170;
+  private readonly DETAIL_NODE_WIDTH = 190;
   private readonly ATTRIBUTE_LINE_LENGTH = 15;
+  private readonly ATTRIBUTE_NODE_MIN_WIDTH = 46;
+  private readonly ATTRIBUTE_NODE_HORIZONTAL_PADDING = 26;
+  private readonly ATTRIBUTE_NODE_APPROX_CHAR_WIDTH = 7.2;
+  private readonly ATTRIBUTE_NODE_MAX_LINES = 3;
 
   private nPtychState: HierarchyDatasetState =
     this.createEmptyDatasetState();
@@ -1864,14 +1870,11 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       Math.PI * (3 - Math.sqrt(5));
 
     const nodes: MainGraphNode[] = nodeIds.map((id, index) => {
-      const lines = this.wrapAttributeLabel(
+      const labelLayout = this.getAttributeNodeLayout(
         id,
-        this.ATTRIBUTE_LINE_LENGTH
-      );
-
-      const boxHeight = Math.max(
+        this.MAIN_GRAPH_NODE_WIDTH,
         56,
-        26 + lines.length * 18
+        26
       );
 
       const normalizedRadius =
@@ -1886,8 +1889,9 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
 
       return {
         id,
-        lines,
-        boxHeight,
+        lines: labelLayout.lines,
+        boxWidth: labelLayout.boxWidth,
+        boxHeight: labelLayout.boxHeight,
         x:
           Math.cos(angle) *
           initialRadius *
@@ -2127,8 +2131,13 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       56
     );
 
+    const maxNodeWidth = Math.max(
+      ...nodes.map(node => node.boxWidth),
+      this.ATTRIBUTE_NODE_MIN_WIDTH
+    );
+
     const horizontalSafety =
-      this.MAIN_GRAPH_NODE_WIDTH / 2 +
+      maxNodeWidth / 2 +
       this.MAIN_GRAPH_EDGE_SAFETY * 0.45;
 
     const verticalSafety =
@@ -2255,7 +2264,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
 
     const preferredSpacing =
       Math.max(
-        this.MAIN_GRAPH_NODE_WIDTH * 1.55,
+        maxNodeWidth * 1.55,
         Math.sqrt(
           targetArea /
           Math.max(1, nodes.length)
@@ -2423,7 +2432,11 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
           }
 
           const requiredX =
-            this.MAIN_GRAPH_NODE_WIDTH +
+            (
+              leftNode.boxWidth +
+              rightNode.boxWidth
+            ) /
+            2 +
             this.MAIN_GRAPH_RECTANGLE_PADDING;
 
           const requiredY =
@@ -2636,22 +2649,26 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
 
     graphNodes
       .append('rect')
-      .attr('x', -this.MAIN_GRAPH_NODE_WIDTH / 2 + 3)
+      .attr('x', node =>
+        -node.boxWidth / 2 + 3
+      )
       .attr('y', node =>
         -node.boxHeight / 2 + 4
       )
-      .attr('width', this.MAIN_GRAPH_NODE_WIDTH)
+      .attr('width', node => node.boxWidth)
       .attr('height', node => node.boxHeight)
       .attr('rx', 10)
       .attr('fill', 'rgba(0,0,0,0.08)');
 
     graphNodes
       .append('rect')
-      .attr('x', -this.MAIN_GRAPH_NODE_WIDTH / 2)
+      .attr('x', node =>
+        -node.boxWidth / 2
+      )
       .attr('y', node =>
         -node.boxHeight / 2
       )
-      .attr('width', this.MAIN_GRAPH_NODE_WIDTH)
+      .attr('width', node => node.boxWidth)
       .attr('height', node => node.boxHeight)
       .attr('rx', 10)
       .attr('fill', '#ffffff')
@@ -2921,28 +2938,23 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
     const centerX = width / 2;
     const centerY = height / 2;
 
-    const detailNodeWidth =
+    const detailMaxNodeWidth =
       isMainCorrelationGraph
         ? this.MAIN_GRAPH_NODE_WIDTH
-        : 190;
+        : this.DETAIL_NODE_WIDTH;
 
     const nodes: DetailNode[] =
       structure.members.map((member, index) => {
-        const lines = this.wrapAttributeLabel(
+        const labelLayout = this.getAttributeNodeLayout(
           member,
-          this.ATTRIBUTE_LINE_LENGTH
+          detailMaxNodeWidth,
+          isMainCorrelationGraph ? 56 : 64,
+          isMainCorrelationGraph ? 26 : 30
         );
 
-        const boxHeight =
-          isMainCorrelationGraph
-            ? Math.max(
-                56,
-                26 + lines.length * 18
-              )
-            : Math.max(
-                64,
-                30 + lines.length * 18
-              );
+        const lines = labelLayout.lines;
+        const boxWidth = labelLayout.boxWidth;
+        const boxHeight = labelLayout.boxHeight;
 
         if (isMainCorrelationGraph) {
           const cached =
@@ -2952,6 +2964,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
             return {
               id: member,
               lines,
+              boxWidth,
               boxHeight,
               x: cached.x,
               y: cached.y,
@@ -2972,6 +2985,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
           return {
             id: member,
             lines,
+            boxWidth,
             boxHeight,
             x: Math.cos(angle) * fallbackRadius,
             y: Math.sin(angle) * fallbackRadius,
@@ -2987,6 +3001,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
             return {
               id: member,
               lines,
+              boxWidth,
               boxHeight,
               x: centerX,
               y: centerY,
@@ -3023,6 +3038,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
           return {
             id: member,
             lines,
+            boxWidth,
             boxHeight,
             x,
             y,
@@ -3045,6 +3061,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
         return {
           id: member,
           lines,
+          boxWidth,
           boxHeight,
           x:
             centerX +
@@ -3097,7 +3114,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
             .forceCollide<DetailNode>()
             .radius(node => {
               const halfWidth =
-                detailNodeWidth / 2;
+                node.boxWidth / 2;
 
               const halfHeight =
                 node.boxHeight / 2;
@@ -3208,14 +3225,14 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       const minX = Math.min(
         ...nodes.map(node =>
           (node.x ?? 0) -
-          detailNodeWidth / 2
+          node.boxWidth / 2
         )
       );
 
       const maxX = Math.max(
         ...nodes.map(node =>
           (node.x ?? 0) +
-          detailNodeWidth / 2
+          node.boxWidth / 2
         )
       );
 
@@ -3415,12 +3432,12 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       .append('rect')
       .attr(
         'x',
-        -detailNodeWidth / 2 + 3
+        node => -node.boxWidth / 2 + 3
       )
       .attr('y', node =>
         -node.boxHeight / 2 + 4
       )
-      .attr('width', detailNodeWidth)
+      .attr('width', node => node.boxWidth)
       .attr('height', node => node.boxHeight)
       .attr('rx', 10)
       .attr('fill', 'rgba(0,0,0,0.08)');
@@ -3429,12 +3446,12 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       .append('rect')
       .attr(
         'x',
-        -detailNodeWidth / 2
+        node => -node.boxWidth / 2
       )
       .attr('y', node =>
         -node.boxHeight / 2
       )
-      .attr('width', detailNodeWidth)
+      .attr('width', node => node.boxWidth)
       .attr('height', node => node.boxHeight)
       .attr('rx', 10)
       .attr('fill', node =>
@@ -3497,6 +3514,10 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
           .text(line);
       });
     });
+
+    nodeGroups
+      .append('title')
+      .text(node => node.id);
 
     const updateDetailPositions = (): void => {
       links
@@ -3735,6 +3756,151 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       zoomBehavior.transform,
       transform
     );
+  }
+
+  private getAttributeNodeLayout(
+    value: string,
+    maxWidth: number,
+    minHeight: number,
+    heightBase: number
+  ): {
+    lines: string[];
+    boxWidth: number;
+    boxHeight: number;
+  } {
+    const maxTextWidth = Math.max(
+      1,
+      maxWidth -
+      this.ATTRIBUTE_NODE_HORIZONTAL_PADDING
+    );
+
+    const maxCharsPerLine = Math.max(
+      4,
+      Math.floor(
+        maxTextWidth /
+        this.ATTRIBUTE_NODE_APPROX_CHAR_WIDTH
+      )
+    );
+
+    const lines =
+      this.wrapAttributeLabelForNode(
+        value,
+        maxCharsPerLine
+      );
+
+    const longestLineLength = Math.max(
+      1,
+      ...lines.map(line => line.length)
+    );
+
+    const contentWidth =
+      longestLineLength *
+      this.ATTRIBUTE_NODE_APPROX_CHAR_WIDTH +
+      this.ATTRIBUTE_NODE_HORIZONTAL_PADDING;
+
+    const boxWidth =
+      lines.length > 1
+        ? maxWidth
+        : Math.min(
+            maxWidth,
+            Math.max(
+              this.ATTRIBUTE_NODE_MIN_WIDTH,
+              Math.ceil(contentWidth)
+            )
+          );
+
+    const boxHeight = Math.max(
+      minHeight,
+      heightBase + lines.length * 18
+    );
+
+    return {
+      lines,
+      boxWidth,
+      boxHeight
+    };
+  }
+
+  private wrapAttributeLabelForNode(
+    value: string,
+    maxLength: number
+  ): string[] {
+    const normalizedValue = value.trim();
+
+    if (!normalizedValue) {
+      return [''];
+    }
+
+    if (normalizedValue.length <= maxLength) {
+      return [normalizedValue];
+    }
+
+    const lines: string[] = [];
+    let remaining = normalizedValue;
+
+    while (
+      remaining.length > 0 &&
+      lines.length < this.ATTRIBUTE_NODE_MAX_LINES
+    ) {
+      const isLastLine =
+        lines.length ===
+        this.ATTRIBUTE_NODE_MAX_LINES - 1;
+
+      if (remaining.length <= maxLength) {
+        lines.push(remaining);
+        break;
+      }
+
+      if (isLastLine) {
+        const visibleLength = Math.max(
+          1,
+          maxLength - 3
+        );
+
+        lines.push(
+          `${remaining
+            .substring(0, visibleLength)
+            .trimEnd()}...`
+        );
+
+        break;
+      }
+
+      let splitIndex = maxLength;
+
+      for (
+        let index = maxLength - 1;
+        index >= Math.floor(maxLength / 2);
+        index--
+      ) {
+        const char = remaining[index];
+
+        if (
+          char === '_' ||
+          char === '-' ||
+          char === ' '
+        ) {
+          splitIndex = index + 1;
+          break;
+        }
+      }
+
+      const line = remaining
+        .substring(0, splitIndex)
+        .trim();
+
+      if (line.length > 0) {
+        lines.push(line);
+      }
+
+      remaining = remaining
+        .substring(splitIndex)
+        .trim();
+    }
+
+    return lines.length > 0
+      ? lines
+      : [''];
   }
 
   private wrapAttributeLabel(

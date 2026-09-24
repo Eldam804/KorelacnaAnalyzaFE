@@ -1,0 +1,26 @@
+appId: com.correlationmonoliths.desktop
+productName: Correlation Monoliths
+electronVersion: 31.7.7
+asar: true
+
+directories:
+  output: release
+
+extraMetadata:
+  main: electron/main.cjs
+
+files:
+  - package.json
+  - dist/**/*
+  - electron/main.cjs
+
+extraResources:
+  - from: desktop/backend/correlation-backend.exe
+    to: backend/correlation-backend.exe
+
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+  artifactName: Correlation-Monoliths-${version}-portable.${ext}
