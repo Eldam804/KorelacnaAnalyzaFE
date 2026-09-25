@@ -21,19 +21,28 @@
 
   <div
     class="upload-area"
+    [class.drag-over]="isDragOver"
     *ngIf="!selectedFile"
-    (click)="!isLoading && fileInput.click()">
+    (click)="!isLoading && fileInput.click()"
+    (dragenter)="onDragEnter($event)"
+    (dragover)="onDragOver($event)"
+    (dragleave)="onDragLeave($event)"
+    (drop)="onFileDrop($event)">
 
     <mat-icon class="upload-icon">
-      cloud_upload
+      {{ isDragOver ? 'file_download' : 'cloud_upload' }}
     </mat-icon>
 
     <div class="upload-title">
-      CSV file
+      {{ isDragOver ? 'Drop CSV file here' : 'CSV file' }}
     </div>
 
     <div class="upload-description">
-      Click to add a .csv file
+      {{
+        isDragOver
+          ? 'Release to add the file'
+          : 'Click or drop a .csv file here'
+      }}
     </div>
 
   </div>
@@ -73,7 +82,7 @@
 
   <mat-form-field
     appearance="outline"
-    class="alpha-field">
+    class="alpha-field correlation-method-field">
 
     <mat-label>Correlation method</mat-label>
 
@@ -99,7 +108,7 @@
 
   <mat-form-field
     appearance="outline"
-    class="alpha-field">
+    class="alpha-field alpha-value-field">
 
     <mat-label>Alpha</mat-label>
 

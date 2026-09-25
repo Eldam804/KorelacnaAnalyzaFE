@@ -87,3 +87,30 @@
 
   position: relative;
 }
+.main-toolbar {
+  position: relative;
+}
+
+.actions {
+  position: absolute;
+  left: 50%;
+  top: 0;
+
+  height: 100%;
+
+  transform: translateX(-50%);
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+
+  z-index: 10;
+
+  -webkit-app-region: no-drag;
+}
+
+.actions button,
+.actions .mat-mdc-button-base {
+  -webkit-app-region: no-drag;
+}

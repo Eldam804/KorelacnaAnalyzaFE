@@ -20,7 +20,9 @@ export interface AddFilesDialogResult
   extends CompleteAnalysisResult {
 
   file: File;
+
   alpha: number;
+
   method: CorrelationMethod;
 }
 
@@ -32,11 +34,17 @@ export interface AddFilesDialogResult
 export class AddFilesComponent {
 
   selectedFile: File | null = null;
+
   alpha = 0;
+
   correlationMethod: CorrelationMethod = 'pearson';
+
   errorMessage = '';
+
   isLoading = false;
-  
+  isDragOver = false;
+  private dragDepth = 0;
+
   constructor(
     private dialogRef:
       MatDialogRef<
@@ -50,6 +58,7 @@ export class AddFilesComponent {
   onFileSelected(
     event: Event
   ): void {
+
     if (this.isLoading) {
       return;
     }
@@ -64,6 +73,98 @@ export class AddFilesComponent {
       return;
     }
 
+    if (!this.trySelectFile(file)) {
+      input.value = '';
+    }
+  }
+
+ onDragEnter(
+  event: DragEvent
+): void {
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (this.isLoading) {
+    return;
+  }
+
+  this.dragDepth++;
+
+  this.isDragOver = true;
+
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'copy';
+  }
+}
+
+onDragOver(
+  event: DragEvent
+): void {
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (this.isLoading) {
+    return;
+  }
+
+  this.isDragOver = true;
+
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'copy';
+  }
+}
+
+onDragLeave(
+  event: DragEvent
+): void {
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (this.isLoading) {
+    return;
+  }
+
+  this.dragDepth = Math.max(
+    0,
+    this.dragDepth - 1
+  );
+
+  if (this.dragDepth === 0) {
+    this.isDragOver = false;
+  }
+}
+
+onFileDrop(
+  event: DragEvent
+): void {
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  this.dragDepth = 0;
+  this.isDragOver = false;
+
+  if (this.isLoading) {
+    return;
+  }
+
+  const file =
+    event.dataTransfer?.files?.[0];
+
+  if (!file) {
+    return;
+  }
+
+    this.trySelectFile(file);
+  }
+
+  private trySelectFile(
+    file: File
+  ): boolean {
+
     if (
       !file.name
         .toLowerCase()
@@ -73,25 +174,30 @@ export class AddFilesComponent {
         'Choose a file in CSV format.';
 
       this.selectedFile = null;
-      input.value = '';
 
-      return;
+      return false;
     }
 
     this.errorMessage = '';
+
     this.selectedFile = file;
+
+    return true;
   }
 
   removeFile(): void {
+
     if (this.isLoading) {
       return;
     }
 
     this.selectedFile = null;
+
     this.errorMessage = '';
   }
 
   submit(): void {
+
     if (
       !this.selectedFile ||
       this.isLoading
@@ -110,6 +216,7 @@ export class AddFilesComponent {
     }
 
     this.errorMessage = '';
+
     this.isLoading = true;
 
     this.pythonConnector
@@ -126,18 +233,29 @@ export class AddFilesComponent {
         )
       )
       .subscribe({
+
         next: result => {
+
           this.dialogRef.close({
+
             file: this.selectedFile!,
+
             alpha: this.alpha,
+
             method: this.correlationMethod,
+
             analysis: result.analysis,
+
             nPtychs: result.nPtychs,
+
             paths: result.paths,
+
             hotspots: result.hotspots
           });
         },
+
         error: error => {
+
           console.error(
             'COMPLETE ANALYSIS ERROR:',
             error
@@ -152,6 +270,7 @@ export class AddFilesComponent {
   }
 
   cancel(): void {
+
     if (this.isLoading) {
       return;
     }
