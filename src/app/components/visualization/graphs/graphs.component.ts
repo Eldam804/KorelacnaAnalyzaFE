@@ -1775,25 +1775,16 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
         this.openMainGraphDetail();
       });
 
-    const shadowRect = group
-      .append('rect')
-      .attr('x', -mainGraphWidth / 2 + 4)
-      .attr('y', -mainGraphHeight / 2 + 5)
-      .attr('width', mainGraphWidth)
-      .attr('height', mainGraphHeight)
-      .attr('rx', 18)
-      .attr('fill', 'rgba(0,0,0,0.08)');
-
-    const backgroundRect = group
-      .append('rect')
-      .attr('x', -mainGraphWidth / 2)
-      .attr('y', -mainGraphHeight / 2)
-      .attr('width', mainGraphWidth)
-      .attr('height', mainGraphHeight)
-      .attr('rx', 18)
-      .attr('fill', '#ffffff')
-      .attr('stroke', '#cbd5e1')
-      .attr('stroke-width', 2);
+  const backgroundRect = group
+    .append('rect')
+    .attr('x', -mainGraphWidth / 2)
+    .attr('y', -mainGraphHeight / 2)
+    .attr('width', mainGraphWidth)
+    .attr('height', mainGraphHeight)
+    .attr('rx', 18)
+    .attr('fill', '#ffffff')
+    .attr('stroke', '#cbd5e1')
+    .attr('stroke-width', 2);
 
     group
       .append('text')
@@ -2713,7 +2704,7 @@ ${expanded ? 'Click to collapse' : 'Click to expand'}`
       .append('title')
       .text(node => node.id);
 
-    shadowRect.lower();
+
     backgroundRect.lower();
   }
 

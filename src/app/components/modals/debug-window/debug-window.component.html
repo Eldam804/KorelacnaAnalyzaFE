@@ -108,6 +108,44 @@
               <strong>Processing time:</strong>
               {{ data.analysis.processing_time_seconds | number:'1.3-3' }} s
             </li>
+            <li class="analysis-row">
+              <strong>Total substructures:</strong>
+              {{ totalSubstructureAmount }}
+            </li>
+
+            <li class="analysis-row">
+              <strong>N-ptych amount:</strong>
+              {{ nPtychAmount }}
+            </li>
+
+            <li
+              class="analysis-row"
+              *ngFor="let item of nPtychAmountsBySize">
+
+              <strong>
+                N-ptych size {{ item.size }} amount:
+              </strong>
+
+              {{ item.amount }}
+
+            </li>
+
+            <li class="analysis-row">
+              <strong>Hotspot amount:</strong>
+              {{ hotspotAmount }}
+            </li>
+
+            <li
+              class="analysis-row"
+              *ngFor="let item of hotspotAmountsBySize">
+
+              <strong>
+                Hotspot H{{ item.h }} amount:
+              </strong>
+
+              {{ item.amount }}
+
+            </li>
 
           </ul>
 

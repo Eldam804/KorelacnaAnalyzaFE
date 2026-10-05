@@ -45,6 +45,92 @@ export class DebugWindowComponent {
 
     return null;
   }
+  get totalSubstructureAmount(): number {
+  return (
+    (this.data.nPtychs?.length ?? 0) +
+    (this.data.hotspots?.length ?? 0)
+  );
+}
+
+get nPtychAmount(): number {
+  return this.data.nPtychs?.length ?? 0;
+}
+
+get hotspotAmount(): number {
+  return this.data.hotspots?.length ?? 0;
+}
+
+get nPtychAmountsBySize(): Array<{
+  size: number;
+  amount: number;
+}> {
+
+  const counts = new Map<number, number>();
+
+  for (const nPtych of this.data.nPtychs ?? []) {
+
+    const size =
+      Number(
+        nPtych?.n ??
+        nPtych?.nodes?.length ??
+        0
+      );
+
+    if (size <= 0) {
+      continue;
+    }
+
+    counts.set(
+      size,
+      (counts.get(size) ?? 0) + 1
+    );
+  }
+
+  return Array.from(counts.entries())
+    .sort((a, b) => b[0] - a[0])
+    .map(([size, amount]) => ({
+      size,
+      amount
+    }));
+}
+
+get hotspotAmountsBySize(): Array<{
+  h: number;
+  amount: number;
+}> {
+
+  const counts = new Map<number, number>();
+
+  for (const hotspot of this.data.hotspots ?? []) {
+
+    const h =
+      Number(
+        hotspot?.h ??
+        hotspot?.leaves?.length ??
+        (
+          Array.isArray(hotspot?.nodes)
+            ? hotspot.nodes.length - 1
+            : 0
+        )
+      );
+
+    if (h <= 0) {
+      continue;
+    }
+
+    counts.set(
+      h,
+      (counts.get(h) ?? 0) + 1
+    );
+  }
+
+  return Array.from(counts.entries())
+    .sort((a, b) => b[0] - a[0])
+    .map(([h, amount]) => ({
+      h,
+      amount
+    }));
+}
 
 
   close(): void {
