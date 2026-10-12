@@ -6,7 +6,7 @@ The application loads a CSV dataset, calculates a correlation matrix and transfo
 
 Current release version including both the backend and the frontend packaged together: https://github.com/Eldam804/KorelacnaAnalyzaFE/releases/tag/release3
 
----
+
 
 ### Energy Data Dataset
 
