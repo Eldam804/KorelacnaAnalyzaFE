@@ -1,27 +1,39 @@
-# KorelacnaAnalyzaFE
+## About the Application
 
-This project was generated with [Angular CLI](https://github.com/angular/angular-cli) version 16.1.4.
+**Correlation Monoliths** is a desktop application for exploring relationships and structural patterns in numerical datasets.
 
-## Development server
+The application loads a CSV dataset, calculates a correlation matrix and transforms statistically significant relationships into an interactive graph representation.
 
-Run `ng serve` for a dev server. Navigate to `http://localhost:4200/`. The application will automatically reload if you change any of the source files.
+Current release version including both the backend and the frontend packaged together: https://github.com/Eldam804/KorelacnaAnalyzaFE/releases/tag/release3
 
-## Code scaffolding
+---
 
-Run `ng generate component component-name` to generate a new component. You can also use `ng generate directive|pipe|service|class|guard|interface|enum|module`.
+### Energy Data Dataset
 
-## Build
+<img width="12743" height="4777" alt="Energy Data" src="https://github.com/user-attachments/assets/f7d0713e-185f-4f17-9ca3-008d47a77676" />
 
-Run `ng build` to build the project. The build artifacts will be stored in the `dist/` directory.
+---
 
-## Running unit tests
 
-Run `ng test` to execute the unit tests via [Karma](https://karma-runner.github.io).
 
-## Running end-to-end tests
+### Parkinson Dataset
 
-Run `ng e2e` to execute the end-to-end tests via a platform of your choice. To use this command, you need to first add a package that implements end-to-end testing capabilities.
+<img width="10253" height="4514" alt="Parkinson" src="https://github.com/user-attachments/assets/6904d3da-ef39-45dc-821c-2a7e74aa297c" />
 
-## Further help
+---
 
-To get more help on the Angular CLI use `ng help` or go check out the [Angular CLI Overview and Command Reference](https://angular.io/cli) page.
+### Biodegradation Dataset
+
+<img width="8608" height="4537" alt="Biodegradation" src="https://github.com/user-attachments/assets/3b4795f6-797c-418f-808c-e7ba636a8212" />
+
+---
+
+### Wine Quality Red Dataset
+
+<img width="3245" height="2903" alt="Wine Quality Red" src="https://github.com/user-attachments/assets/ce0768fc-4ef4-4f51-a628-604b548f582a" />
+
+---
+
+### Wine Quality White Dataset
+
+<img width="2550" height="2259" alt="Wine Quality White" src="https://github.com/user-attachments/assets/5c07699d-e9ca-40d8-9f26-9db6b0aa6fcc" />
