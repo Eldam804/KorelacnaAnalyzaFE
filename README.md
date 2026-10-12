@@ -14,8 +14,6 @@ Current release version including both the backend and the frontend packaged tog
 
 ---
 
-
-
 ### Parkinson Dataset
 
 <img width="10253" height="4514" alt="Parkinson" src="https://github.com/user-attachments/assets/6904d3da-ef39-45dc-821c-2a7e74aa297c" />
@@ -28,6 +26,12 @@ Current release version including both the backend and the frontend packaged tog
 
 ---
 
+### Sonar Dataset
+
+<img width="10253" height="4514" alt="parkinson" src="https://github.com/user-attachments/assets/5496caa2-e5dd-4a02-8dec-7c54d0c17793" />
+
+
+---
 ### Wine Quality Red Dataset
 
 <img width="3245" height="2903" alt="Wine Quality Red" src="https://github.com/user-attachments/assets/ce0768fc-4ef4-4f51-a628-604b548f582a" />
